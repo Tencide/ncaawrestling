@@ -1,0 +1,30 @@
+body {
+    margin: 0;
+    padding: 0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.container {
+    background-color: #e0e0e0;
+    padding: 30px;
+}
+
+.container h1 {
+    font-size: 32px;
+    color: orange;
+    text-align: center;
+    margin-top: 0;
+}
+
+.container h2 {
+    font-size: 24px;
+    color: darkblue;
+    text-align: left;
+}
+
+.container p {
+    font-size: 16px;
+    color: #333;
+    text-align: left;
+    line-height: 1.6;
+}

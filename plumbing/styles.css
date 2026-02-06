@@ -1,0 +1,456 @@
+/* ========== EMERGENCY PLUMBING – MOBILE-FIRST ========== */
+/* Blue/white palette, no external UI libraries */
+
+:root {
+  --blue-dark: #0d47a1;
+  --blue-mid: #1565c0;
+  --blue-light: #42a5f5;
+  --blue-bg: #e3f2fd;
+  --white: #ffffff;
+  --gray-100: #f5f5f5;
+  --gray-200: #eeeeee;
+  --gray-700: #616161;
+  --gray-900: #212121;
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.12);
+  --radius: 8px;
+  --max-width: 960px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--gray-900);
+  background: var(--white);
+}
+
+/* ---------- HEADER ---------- */
+.site-header {
+  background: var(--blue-dark);
+  color: var(--white);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: var(--shadow);
+}
+
+.header-inner {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.logo {
+  color: var(--white);
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 1.125rem;
+}
+
+/* Hamburger (mobile) */
+.nav-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--white);
+  cursor: pointer;
+}
+
+.nav-toggle[aria-expanded="true"] .hamburger {
+  background: transparent;
+}
+
+.nav-toggle[aria-expanded="true"] .hamburger::before {
+  transform: translateY(0) rotate(45deg);
+}
+
+.nav-toggle[aria-expanded="true"] .hamburger::after {
+  transform: translateY(0) rotate(-45deg);
+}
+
+.hamburger,
+.hamburger::before,
+.hamburger::after {
+  display: block;
+  width: 22px;
+  height: 2px;
+  background: var(--white);
+  border-radius: 2px;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.hamburger {
+  position: relative;
+}
+
+.hamburger::before,
+.hamburger::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.hamburger::before {
+  transform: translateY(-6px);
+}
+
+.hamburger::after {
+  transform: translateY(6px);
+}
+
+/* Nav – hidden on mobile until toggled */
+.main-nav {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--blue-dark);
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+
+.main-nav.is-open {
+  max-height: 280px;
+}
+
+.main-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0.5rem 1rem 1rem;
+}
+
+.main-nav li {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.main-nav li:last-child {
+  border-bottom: none;
+}
+
+.main-nav a {
+  display: block;
+  padding: 0.75rem 0;
+  color: var(--white);
+  text-decoration: none;
+}
+
+.nav-cta {
+  font-weight: 600;
+  color: var(--blue-light) !important;
+}
+
+/* ---------- HERO ---------- */
+.hero {
+  background: linear-gradient(135deg, var(--blue-mid) 0%, var(--blue-dark) 100%);
+  color: var(--white);
+  padding: 2.5rem 1rem 3rem;
+  text-align: center;
+}
+
+.hero-inner {
+  max-width: var(--max-width);
+  margin: 0 auto;
+}
+
+.hero-headline {
+  margin: 0 0 1rem;
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.hero-subheadline {
+  margin: 0 0 1.5rem;
+  font-size: 1rem;
+  opacity: 0.95;
+  max-width: 32em;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ---------- BUTTONS ---------- */
+.btn {
+  display: inline-block;
+  padding: 1rem 1.75rem;
+  font-size: 1.125rem;
+  font-weight: 600;
+  text-decoration: none;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.2s ease, transform 0.1s ease;
+}
+
+.btn:active {
+  transform: scale(0.98);
+}
+
+.btn-primary {
+  background: var(--white);
+  color: var(--blue-dark);
+}
+
+.btn-primary:hover {
+  background: var(--blue-bg);
+}
+
+.btn-secondary {
+  background: var(--blue-mid);
+  color: var(--white);
+  width: 100%;
+}
+
+.btn-secondary:hover {
+  background: var(--blue-dark);
+}
+
+.btn-call {
+  min-width: 200px;
+}
+
+/* ---------- SECTIONS COMMON ---------- */
+section {
+  padding: 2.5rem 1rem;
+}
+
+.section-inner {
+  max-width: var(--max-width);
+  margin: 0 auto;
+}
+
+.section-title {
+  margin: 0 0 1.5rem;
+  font-size: 1.5rem;
+  color: var(--blue-dark);
+  text-align: center;
+}
+
+/* ---------- SERVICES (CARDS) ---------- */
+.services {
+  background: var(--gray-100);
+}
+
+.service-cards {
+  display: grid;
+  gap: 1rem;
+}
+
+.service-card {
+  background: var(--white);
+  padding: 1.25rem;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.service-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.125rem;
+  color: var(--blue-dark);
+}
+
+.service-card p {
+  margin: 0;
+  font-size: 0.9375rem;
+  color: var(--gray-700);
+}
+
+/* ---------- TRUST ---------- */
+.trust {
+  background: var(--white);
+}
+
+.trust-list {
+  list-style: none;
+  margin: 0 0 1.5rem;
+  padding: 0;
+}
+
+.trust-list li {
+  padding: 0.75rem 0;
+  padding-left: 1.75rem;
+  position: relative;
+}
+
+.trust-list li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  color: var(--blue-mid);
+  font-weight: 700;
+}
+
+.pricing-disclaimer {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--gray-700);
+  font-style: italic;
+}
+
+/* ---------- CONTACT ---------- */
+.contact {
+  background: var(--blue-bg);
+}
+
+.contact-intro {
+  margin: 0 0 1rem;
+  text-align: center;
+}
+
+.contact-phone {
+  display: block;
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.callback-form {
+  background: var(--white);
+  padding: 1.5rem;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.form-intro {
+  margin: 0 0 1rem;
+  font-size: 0.9375rem;
+}
+
+.callback-form label {
+  display: block;
+  margin-top: 1rem;
+  margin-bottom: 0.25rem;
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+
+.callback-form input {
+  width: 100%;
+  padding: 0.75rem;
+  font-size: 1rem;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius);
+}
+
+.callback-form input:focus {
+  outline: 2px solid var(--blue-mid);
+  outline-offset: 2px;
+}
+
+.callback-form button {
+  margin-top: 1.25rem;
+}
+
+/* ---------- FOOTER ---------- */
+.site-footer {
+  background: var(--blue-dark);
+  color: var(--white);
+  padding: 1.5rem 1rem;
+  text-align: center;
+}
+
+.footer-inner {
+  max-width: var(--max-width);
+  margin: 0 auto;
+}
+
+.service-area {
+  margin: 0 0 0.75rem;
+  font-size: 0.9375rem;
+  opacity: 0.9;
+}
+
+.copyright {
+  margin: 0;
+  font-size: 0.875rem;
+  opacity: 0.85;
+}
+
+/* ---------- TABLET AND UP ---------- */
+@media (min-width: 600px) {
+  .nav-toggle {
+    display: none;
+  }
+
+  .main-nav {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .main-nav ul {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0;
+  }
+
+  .main-nav li {
+    border-bottom: none;
+  }
+
+  .main-nav a {
+    padding: 0.5rem 0;
+  }
+
+  .hero-headline {
+    font-size: 2.25rem;
+  }
+
+  .hero-subheadline {
+    font-size: 1.125rem;
+  }
+
+  .service-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .section-title {
+    font-size: 1.75rem;
+  }
+}
+
+/* ---------- DESKTOP ---------- */
+@media (min-width: 900px) {
+  .header-inner {
+    padding: 1rem 1.5rem;
+  }
+
+  .hero {
+    padding: 3.5rem 1.5rem 4rem;
+  }
+
+  .hero-headline {
+    font-size: 2.5rem;
+  }
+
+  section {
+    padding: 3rem 1.5rem;
+  }
+
+  .service-cards {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .callback-form {
+    max-width: 28rem;
+    margin: 0 auto;
+  }
+}

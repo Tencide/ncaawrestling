@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="24/7 emergency plumbing – burst pipes, clogged drains, water heater leaks. Licensed, insured, upfront pricing. Call now.">
+  <title>24/7 Emergency Plumbing – Fast Response</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- ========== HEADER & NAV ========== -->
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="#" class="logo">Emergency Plumber</a>
+      <button type="button" class="nav-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="main-nav">
+        <span class="hamburger"></span>
+      </button>
+      <nav id="main-nav" class="main-nav" aria-label="Main navigation">
+        <ul>
+          <li><a href="#services">Services</a></li>
+          <li><a href="#trust">Why Us</a></li>
+          <li><a href="#contact">Contact</a></li>
+          <li><a href="tel:+15551234567" class="nav-cta">Call Now</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- ========== HERO ========== -->
+    <section class="hero">
+      <div class="hero-inner">
+        <h1 class="hero-headline">24/7 Emergency Plumbing – Fast Response</h1>
+        <p class="hero-subheadline">Burst pipes, sudden leaks, and clogged drains don’t wait. We’re on call around the clock to protect your home and get the water flowing again.</p>
+        <a href="tel:+15551234567" class="btn btn-primary btn-call" data-track="hero">Call Now</a>
+      </div>
+    </section>
+
+    <!-- ========== SERVICES ========== -->
+    <section id="services" class="services">
+      <div class="section-inner">
+        <h2 class="section-title">Emergency Services We Handle</h2>
+        <div class="service-cards">
+          <article class="service-card">
+            <h3>Burst Pipes</h3>
+            <p>Broken or frozen pipes can flood your home fast. We locate the break, shut off water, and repair or replace so you’re back to normal quickly.</p>
+          </article>
+          <article class="service-card">
+            <h3>Clogged Drains</h3>
+            <p>Kitchen sinks, showers, and main line blockages cleared with the right tools. No guessing—we get to the cause and fix it.</p>
+          </article>
+          <article class="service-card">
+            <h3>Water Heater Leaks</h3>
+            <p>Leaking or failing water heaters need immediate attention. We diagnose, repair when possible, or recommend replacement with clear options.</p>
+          </article>
+          <article class="service-card">
+            <h3>Sewer Backups</h3>
+            <p>Slow drains, bad odors, or sewage backing up mean a sewer issue. We inspect, clear blockages, and repair damaged lines so your system runs safely.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== TRUST ========== -->
+    <section id="trust" class="trust">
+      <div class="section-inner">
+        <h2 class="section-title">Why Choose Us</h2>
+        <ul class="trust-list">
+          <li><strong>24/7 availability</strong> – We answer and dispatch day or night, weekends and holidays.</li>
+          <li><strong>Licensed & insured</strong> – Fully licensed plumbers and comprehensive insurance for your peace of mind.</li>
+          <li><strong>Upfront pricing</strong> – We explain costs before we start. No surprise bills after the job.</li>
+        </ul>
+        <p class="pricing-disclaimer">Rates vary by job type, location, and time of day. We’ll give you a clear estimate before any work begins.</p>
+      </div>
+    </section>
+
+    <!-- ========== CONTACT ========== -->
+    <section id="contact" class="contact">
+      <div class="section-inner">
+        <h2 class="section-title">Get Help Now</h2>
+        <p class="contact-intro">Call for immediate dispatch or request a callback. We’ll get back to you fast.</p>
+        <a href="tel:+15551234567" class="btn btn-primary btn-call contact-phone" data-track="contact">(555) 123-4567</a>
+        <form class="callback-form" id="callback-form" novalidate>
+          <p class="form-intro">Request a callback – we’ll call you back shortly.</p>
+          <label for="callback-name">Name</label>
+          <input type="text" id="callback-name" name="name" required placeholder="Your name" autocomplete="name">
+          <label for="callback-phone">Phone</label>
+          <input type="tel" id="callback-phone" name="phone" required placeholder="(555) 000-0000" autocomplete="tel">
+          <button type="submit" class="btn btn-secondary">Request Callback</button>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <!-- ========== FOOTER ========== -->
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p class="service-area">Serving the greater metro area and surrounding communities. Same-day and emergency service available.</p>
+      <p class="copyright">&copy; <span id="year"></span> Emergency Plumber. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>In-Class Activity 02 - CSS: Cascading Style Sheets</title>
+    
+    <style>
+    :root {
+        --bg-main: #020617;              /* near-black navy */
+        --bg-card: #0f172a;              /* slate panel */
+        --bg-elevated: #020617;          /* contrast layer */
+        --accent: #f59e0b;
+        --accent-strong: #fbbf24;
+        --accent-soft: rgba(245, 158, 11, 0.18);
+        --text-main: #e5e7eb;             /* primary text */
+        --text-muted: #94a3b8;            /* secondary text */
+        --border-soft: rgba(148,163,184,0.15);
+        --shadow-soft: 0 20px 40px rgba(0,0,0,0.35);
+    }
+
+    * {
+        box-sizing: border-box;
+    }
+
+    body {
+        margin: 0;
+        padding: 48px 56px;
+        background: radial-gradient(
+            1200px 600px at 20% -10%,
+            rgba(56, 189, 248, 0.12),
+            transparent 60%
+        ), var(--bg-main);
+        color: var(--text-main);
+        font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.7;
+    }
+
+    /* Main content cards */
+    body > div {
+        background: linear-gradient(
+            180deg,
+            rgba(255,255,255,0.03),
+            rgba(255,255,255,0.01)
+        ), var(--bg-card);
+        border-radius: 18px;
+        padding: 32px 36px;
+        margin-bottom: 32px;
+        border: 1px solid var(--border-soft);
+        box-shadow: var(--shadow-soft);
+    }
+
+h1 {
+    margin: 0 0 14px 0;
+    font-size: 2.4rem;
+    font-weight: 800;
+    letter-spacing: 0.9px;
+    background: linear-gradient(
+        60deg,
+        #ffd56c,
+        #f59e0b,
+        #fbbf24
+    );
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+h2 {
+    margin-bottom: 10px;
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: #fbbf24;
+}
+
+    h3 {
+        margin-top: 28px;
+        margin-bottom: 8px;
+        font-size: 1.15rem;
+        font-weight: 600;
+        color: #fde68a;
+    }
+
+    h4 {
+        margin-top: 28px;
+        margin-bottom: 8px;
+        font-size: 0.8rem;
+        letter-spacing: 1.6px;
+        text-transform: uppercase;
+        color: var(--text-muted);
+    }
+
+    p {
+        margin: 8px 0;
+        color: var(--text-main);
+    }
+
+    ul {
+        margin-left: 18px;
+        padding-left: 8px;
+    }
+
+    li {
+        margin: 10px 0;
+        color: var(--text-main);
+    }
+
+    /* Code styling */
+    code {
+        font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+        font-size: 0.92em;
+        background-color: rgba(245, 158, 11, 0.12); /* amber-tinted */
+        color: #fde68a; /* warm light */
+        padding: 4px 6px;
+        border-radius: 6px;
+    }
+
+    pre {
+        background: linear-gradient(
+            180deg,
+            rgba(2,6,23,0.9),
+            rgba(2,6,23,0.7)
+        );
+        margin: 0;
+        padding: 20px 22px;
+        border-radius: 14px;
+        max-width: 100%;
+        overflow-x: auto;
+        white-space: pre;
+        border: 1px solid var(--border-soft);
+        font-size: 0.9rem;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);
+    }
+
+    pre code {
+        background: none;
+        color: #e5e7eb;
+        padding: 0;
+    }
+
+    /* Iframe previews */
+    iframe {
+        width: 100%;
+        border-radius: 14px;
+        border: 1px solid var(--border-soft);
+        background-color: #ffffff;
+        margin-top: 16px;
+    }
+
+    /* Highlight classes used in examples */
+    .moviestitle {
+        display: inline-block;
+        padding: 6px 14px;
+        border-radius: 999px;
+        background: linear-gradient(
+            90deg,
+            rgba(56,189,248,0.25),
+            rgba(34,197,94,0.25)
+        );
+    }
+
+    .highlightbook {
+        background-color: rgba(34,197,94,0.25);
+        color: #bbf7d0;
+        font-weight: 600;
+        padding: 3px 8px;
+        border-radius: 999px;
+    }
+
+    .highlightyear {
+        color: #fca5a5;
+        font-weight: 600;
+    }
+
+    footer {
+        margin-top: 56px;
+        text-align: center;
+        color: var(--text-muted);
+        font-size: 0.85rem;
+    }
+
+    footer span {
+        display: block;
+        margin-top: 6px;
+    }
+
+    a {
+        color: #fde68a;
+        text-decoration: none;
+    }
+
+    a:hover {
+        text-decoration: underline;
+    }
+</style>
+</head>
+
+<body>
+    <div>
+<p style="
+    margin: 0 0 18px 0;
+    font-size: 1.6rem;
+    font-weight: 600;
+    letter-spacing: 1.8px;
+    text-transform: uppercase;
+    background: linear-gradient(
+        60deg,
+        #fde68a,
+        #f59e0b
+    );
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    opacity: 0.95;
+">
+    SE / COM S 3190 · Construction of User Interfaces
+</p>
+
+
+        <h1 style = "font-size: 30px;">In-Class Activity 02</h1>
+        <h1 style = "font-size: 50px;">CSS: Cascading Style Sheets</h1>
+
+        <p>CSS is a language to describe the presentation of a document written in HTML.</p>
+        <p>CSS is used to style and layout web pages. A web page is improved altering fonts, colors, size and space of
+            content, columns animations and decorative elements.</p>
+    </div>
+
+    <div style="margin-left: 3rem;">
+        <p>You will create three HTML files to practice the different ways to add CSS per selector : tag, class and id. The file names must be as follows:</p>
+        <ul style="font-family: 'Courier New', Courier, monospace;">    
+            <li><code>netId_moviespertag.html</code></li>
+            <li><code>netId_moviesperclass.html</code></li>
+            <li><code>netId_moviesperid.html</code></li>
+        </ul>
+        <p>One final HTML file must be created with the Questions and responses shown at the end of this activity. The file name must be as indicated:</p>
+        <ul style="font-family: 'Courier New', Courier, monospace;">
+            <li><code>netId_css_selectors.html</code></li>
+        </ul>
+        <p>where <strong><b><code>netId</code></b></strong> is the ISU NetID; e.g., <code style="font-weight: bold;">sarfaraz</code> is the NetId and the e-mail:<code>sarfaraz@iastate.edu</code>.</p>
+    
+        <p>At the top of the <code>body</code> section in every HTML add your student data:</p>
+        <div style="background-color: rgba(255, 166, 0, 0.085); ">
+            <pre><code>
+&lt;p&gt;Student name : name&lt;/p&gt;
+&lt;p&gt;email : netId@iastate.edu&lt;/p&gt;
+&lt;p&gt;date : January 28, 2026&lt;/p&gt;
+            </pre></code>
+            <b>Note:</b> <em> netId</em> is the ISU NetID; e.g., <code style="font-weight: bold;">sarfaraz</code> is the NetId and the e-mail:<code>sarfaraz@iastate.edu</code>.</p>
+        </div>
+
+    </div>
+
+    <div>
+        <h2>CSS selectors : </h2>
+        <ul >
+            <li><span style="font-size:20px"><u>Tag</u></span>: A tag selector is sometimes referred to as a <code>type</code> name selector or <code>element</code> selector because it selects an <code>HTML tag/element</code> in your document.</li>
+            <li><span style="font-size: 20px;"><u>Class</u></span>: The class selector selects elements with a specific <code>class attribute</code>.</li>
+            <li><span style="font-size: 20px;"><u>Id</u></span>: The id selector uses the <code>id attribute of an HTML element</code> to select a specific element. The id of an element is unique within a page, so the id selector is used</li>
+        </ul>
+    </div>
+
+    <!-- Init Type or Tag selector -->
+    <div>
+        <h2>1) Type or Tag name selectors</h2>
+        <p>The type selector is also referring to the tag names such as <code style="font-size: 24px;">h1, h2, div, p, ul, </code> etc. </p>
+
+        <!-- Exercise -->
+        <!-- 1 -->
+        <h4>Instructions:</h4>
+        <p style="margin-left: 3em;">Write the next code in a <code style="font-size: 24px;">NetId_moviespertag.html</code> file and modify it to improve the appearence using CSS by
+            <strong>Type</strong> or <strong>Tag</strong> name :</p>
+
+        <div style="background-color: rgba(255, 166, 0, 0.085); ">
+            <pre><code>
+&lt;!DOCTYPE html&gt;
+&lt;html lang="en"&gt;
+&lt;head&gt;
+    &lt;meta charset="UTF-8"&gt;
+    &lt;meta name="viewport" content="width=device-width, initial-scale=1.0"&gt;
+    &lt;title&gt;CSS: Cascading Style Sheets - Tag selector &lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
+
+    &lt;div&gt;
+        &lt;h1&gt;List of movies&lt;/h1&gt;
+        &lt;h3&gt;Aquaman :&lt;/h3&gt;
+        &lt;p&gt;
+        Aquaman is a superhero appearing in American comic books published by DC Comics. Created by Paul Norris and Mort Weisinger, the character debuted in More Fun Comics #73 (November 1941).
+        &lt;/p&gt;
+        &lt;h3&gt;Ant-Man :&lt;/h3&gt;
+        &lt;p&gt;
+        Ant-Man is the name of several superheroes appearing in books published by Marvel Comics. Created by Stan Lee, Larry Lieber and Jack Kirby, Ant-Man's first appearance was in Tales to Astonish #27 (January 1962) but first appeared in costume in Tales to Astonish #35 (September 1962).
+        &lt;/p&gt;
+    &lt;/div&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+            </code></pre>
+        </div>
+
+        <div>
+            <p>The Web page is the next :</p>
+            <div>
+                <iframe 
+                style="width:70%; height:250px;"
+                srcdoc='<!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>CSS: Cascading Style Sheets - Tag selector </title>
+                </head>
+                <body>
+                
+                    <div>
+                        <h1>List of movies</h1>
+                        <h3>Aquaman :</h3>
+                        <p>
+                        Aquaman is a superhero appearing in American comic books published by DC Comics. Created by Paul Norris and Mort Weisinger, the character debuted in More Fun Comics #73 (November 1941).
+                        </p>
+                        <h3>Ant-Man :</h3>
+                        <p>
+                        Ant-Man is the name of several superheroes appearing in books published by Marvel Comics. Created by Stan Lee, Larry Lieber and Jack Kirby, Ant-Man's first appearance was in Tales to Astonish #27 (January 1962) but first appeared in costume in Tales to Astonish #35 (September 1962).
+                        </p>
+                    </div>
+
+                </body>
+                </html>
+                '>
+            </iframe>
+            </div>
+        </div>
+        <!-- END -->
+        <!-- 1 -->
+        <p>The resulting Web page contains the default text formats. Let's to improve this Web page using CSS statements. </p>
+
+        <p>We are going to add style to text such as: </p>
+        <ul>
+            <li>different type of text</li>
+            <li>different sizes</li>
+            <li>colors</li>
+        </ul>
+        
+        <p><strong>Add the next stylesheet code in the section <code style="font-size: 20px;">&lt;head&gt; ... &lt;/head&gt;</code></strong>. </p>
+
+        <!-- BEGIN : Adding code to HTML TUTORIAL  -->
+        <div style="background-color: rgba(255, 166, 0, 0.085); ">
+            <pre><code>
+&lt;style&gt;
+    div {
+        border: 1px solid gray;
+        padding: 8px;
+    }
+
+    h1 {
+        text-align: center;
+        text-transform: uppercase;
+        color: #4CAF50;
+    }
+
+    h3 {
+        text-align: left;
+        color: #4CAF50;
+    }
+
+    p {
+        text-indent: 50px;
+        text-align: justify;
+        letter-spacing: 3px;
+    }
+&lt;/style&gt;
+            </code></pre>
+        </div>
+        <!-- END : Adding code to HTML TUTORIAL  -->
+
+
+        <p>Observe the <code>tags</code> in the <code>&lt;style&gt; ... &lt;/style&gt;</code> section. The tags <code style="font-size: 20px;">div, h1, h3, p</code> are stylized using CSS. In a later lecture we will see in detail how to improve the appearance of the text. </p>
+
+        <div>
+            <p>The Web page is the next :</p>
+            <div>
+                <iframe 
+                style="width:100%; height:270px;"
+                srcdoc='<!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>CSS: Cascading Style Sheets - Tag selector </title>
+                    <style>
+                    div {
+                        border: 1px solid gray;
+                        padding: 8px;
+                    }
+            
+                    h1 {
+                        text-align: center;
+                        text-transform: uppercase;
+                        color: #4CAF50;
+                    }
+
+                    h3 {
+                        text-align: left;
+                        color: #4CAF50;
+                    }
+                
+                    p {
+                        text-indent: 50px;
+                        text-align: justify;
+                        letter-spacing: 3px;
+                    }
+                </style>
+            
+                </head>
+                <body>
+                
+                    <div>
+                        <h1>List of movies</h1>
+                        <h3>Aquaman :</h3>
+                        <p>
+                        Aquaman is a superhero appearing in American comic books published by DC Comics. Created by Paul Norris and Mort Weisinger, the character debuted in More Fun Comics #73 (November 1941).
+                        </p>
+                        <h3>Ant-Man :</h3>
+                        <p>
+                        Ant-Man is the name of several superheroes appearing in books published by Marvel Comics. Created by Stan Lee, Larry Lieber and Jack Kirby, Ant-Man's first appearance was in Tales to Astonish #27 (January 1962) but first appeared in costume in Tales to Astonish #35 (September 1962).
+                        </p>
+                    </div>
+
+                </body>
+                </html>
+                '>
+            </iframe>
+            </div>
+        </div>
+
+        <p>The text in general is in the <code>div</code> element. For that reason all the text is enclose in a <code>border: 1px solid red;</code></p>
+        <p>Second, the title <code>LIST OF MOVIES</code> is part of the <code>h1</code> element and the text is <code>text-align: center; text-transform: uppercase; color: #4CAF50;</code>.</p>
+        <p>Every sub-title, such as <code>Aquaman</code> or <code>Ant-Man</code> are in <code>h3</code> header. These headers algo are green but the text align is left.</p>
+        <p>Finally, every paragraph <code>p</code> is <code>text-align:justify;</code> and the spacing between characters is <code>letter-spacing: 3px;</code>.</p>
+
+        <p><strong>In general the Web page has improved a lot !!.</strong></p>
+
+    </div>
+    <!-- END Type or Tag selector -->
+    
+    <!-- Init class selector -->
+    <br>
+    <div>
+        <h2>2) Class selector</h2>
+        <p>The <code>class</code> selector starts with a dot (<code>.</code>) character. It will select everything in the document with that class applied to it.</p>
+        <p>Now, you already know that adding code to the <code>&lt;style&gt;...&lt;/style&gt;</code> section we can improve the appearance of the page.</p>
+        <p>We are going to improve even more the appearance of the previous page.</p>
+
+        <h4 >Instructions:</h4>
+            <p style="margin-left: 3em;">Write the next code in a <code style="font-size: 24px;">NetId_moviesperclass.html</code> file and modify it to improve the appearence using CSS by
+            <strong>Class</strong> :</p>
+
+        <p>Add the next code to <code>&lt;style&gt;...&lt;/style&gt;</code> section :</p>
+
+        <!-- BEGIN : Adding code to HTML TUTORIAL  -->
+        <div style="background-color: rgba(255, 166, 0, 0.085); ">
+            <pre><code>
+.moviestitle {
+    background-color: #4caf4f2a;
+}
+.highlightbook {
+    font-weight: bold;
+    background-color: #1d1f1dab;
+    color: white;
+}
+.highlightyear{
+    color: red;
+}
+            </code></pre>
+        </div>
+        <!-- END : Adding code to HTML TUTORIAL  -->
+
+        <p>The improvements are the next:</p>
+        <ul>
+            <li style="padding-top:5px;">The code in <code>.moviestitle</code> will add a <code>background-color: #4caf4f2a;</code> to the <code style="background-color: #4caf4f2a;">LIST OF MOVIES</code> title.</li>
+            <li style="padding-top:5px;">Second improvement is that the name of the book <code style="font-weight: bold; background-color: #1d1f1dab; color: white;">American comic books published by DC Comics</code> is bold, with background-color and the text in white color.</li>
+            <li style="padding-top:5px;">The third improvement is given to the year of printed such as <code style="color:red;">November 1941</code> is red.</li>
+        </ul>
+        
+
+        <!-- Exercise -->
+        <!-- 2 -->
+        <p>The complete code is shown next which it includes the additions to the <code>&lt;style&gt;...&lt;/style&gt;</code> section using tag by <strong><code>class</code></strong>.  Write the next code in a file <code>moviesperclass.html</code> and modify the CSS properties to change the appearance of the page :</p>
+
+        <div style="background-color: rgba(255, 166, 0, 0.085); ">
+            <pre><code>
+&lt;!DOCTYPE html&gt;
+&lt;html lang="en"&gt;
+&lt;head&gt;
+    &lt;meta charset="UTF-8"&gt;
+    &lt;meta name="viewport" content="width=device-width, initial-scale=1.0"&gt;
+    &lt;title&gt;CSS: Cascading Style Sheets - Class selector &lt;/title&gt;
+    &lt;style&gt;
+        div {
+        border: 1px solid gray;
+        padding: 8px;
+        }
+
+        h1 {
+        text-align: center;
+        text-transform: uppercase;
+        color: #4CAF50;
+        }
+
+        h3 {
+            text-align: left;
+            color: #4CAF50;
+        }
+    
+        p {
+        text-indent: 50px;
+        text-align: justify;
+        letter-spacing: 3px;
+        }
+        .moviestitle {
+            background-color: #4caf4f2a;
+        }
+        .highlightbook {
+            font-weight: bold;
+            background-color: #1d1f1dab;
+            color: white;
+        }
+        .highlightyear{
+            color: red;
+        }
+    &lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+
+    &lt;div&gt;
+        &lt;h1 class="moviestitle"&gt;List of movies&lt;/h1&gt;
+        &lt;h3&gt;Aquaman :&lt;/h3&gt;
+        &lt;p&gt;
+        Aquaman is a superhero appearing in &lt;span class="highlightbook"&gt; American comic books published by DC Comics&lt;/span&gt;. Created by Paul Norris and Mort Weisinger, the character debuted in More Fun Comics #73 (&lt;span class="highlightyear"&gt; November 1941&lt;/span&gt;).
+        &lt;/p&gt;
+        &lt;h3&gt;Ant-Man :&lt;/h3&gt;
+        &lt;p&gt;
+        Ant-Man is the name of several superheroes appearing in books published by Marvel Comics. Created by Stan Lee, Larry Lieber and Jack Kirby, Ant-Man's first appearance was in Tales to Astonish #27 (&lt;span class="highlightyear"&gt; January 1962&lt;/span&gt;) but first appeared in costume in Tales to Astonish #35 (&lt;span class="highlightyear"&gt;September 1962&lt;/span&gt;).
+        &lt;/p&gt;
+    &lt;/div&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+            </code></pre>
+        </div>
+        <!-- END -->
+        <!-- 2 -->
+
+        <p>Observe the <code>classes</code> in <span><code> style .. style</code></span>. The classes <code>moviestitle, highlightbook, highlightyear</code> are stylizing the HTML code.</p>
+
+        <div>
+            <p>The Web page is the next :</p>
+            <div>
+                <iframe 
+                style="width:100%; height:270px;"
+                srcdoc='<!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>CSS: Cascading Style Sheets - Class selector </title>
+                    <style>
+                        div {
+                        border: 1px solid gray;
+                        padding: 8px;
+                        }
+                
+                        h1 {
+                        text-align: center;
+                        text-transform: uppercase;
+                        color: #4CAF50;
+                        }
+
+                        h3 {
+                            text-align: left;
+                            color: #4CAF50;
+                        }
+                    
+                        p {
+                        text-indent: 50px;
+                        text-align: justify;
+                        letter-spacing: 3px;
+                        }
+                        .moviestitle {
+                            background-color: #4caf4f2a;
+                        }
+                        .highlightbook {
+                            font-weight: bold;
+                            background-color: #1d1f1dab;
+                            color: white;
+                        }
+                        .highlightyear{
+                            color: red;
+                        }
+                    </style>
+                </head>
+                <body>
+                
+                    <div>
+                        <h1 class="moviestitle">List of movies</h1>
+                        <h3>Aquaman :</h3>
+                        <p>
+                        Aquaman is a superhero appearing in <span class="highlightbook"> American comic books published by DC Comics</span>. Created by Paul Norris and Mort Weisinger, the character debuted in More Fun Comics #73 (<span class="highlightyear"> November 1941</span>).
+                        </p>
+                        <h3>Ant-Man :</h3>
+                        <p>
+                        Ant-Man is the name of several superheroes appearing in books published by Marvel Comics. Created by Stan Lee, Larry Lieber and Jack Kirby, Ant-Man's first appearance was in Tales to Astonish #27 (<span class="highlightyear"> January 1962</span>) but first appeared in costume in Tales to Astonish #35 (<span class="highlightyear">September 1962</span>).
+                        </p>
+                    </div>
+                
+                </body>
+                </html>
+                '>
+            </iframe>
+            </div>
+        </div>
+
+    </div>
+    <!-- END class selector -->
+
+    <!-- Init Id selector -->
+    <br>
+    <div>
+        <h2>3) Id selector</h2>
+        <p>The <code>id</code> selector in the <code>&lt;style&gt;...&lt;/style&gt;</code> section begins with a <code>#</code> symbol rather than a dot (<code>.</code>) character for a class or the HTML tag. The <code>id</code> selector is used in the same way as we use a class selector. The class can be re-used in several parts of the HTML code; however, <strong> an <code>id</code> can be used only once per page</strong>. That is, the <code>id</code> selector can only be applied to the element pertaining this id.</p>
+        <p>This time, the next ids :</p>
+        <ul>
+            <li><code>head3improve_1</code> assigned to header <strong>Aquaman</strong>,</li>
+            <li><code>head3improve_2</code> assigned to header <strong>Ant-Man</strong>, and </li>
+            <li><code>stanlee</code> assigned to the name of the Author : <strong>Stan Lee</strong></li>
+        </ul>
+        <p>will improve the appearance of the previous page.</p>
+
+        <!-- Exercise -->
+        <!-- 3 -->
+        <h4>Instructions:</h4>
+        <p style="margin-left: 3em;">Write the next code in a <code style="font-size: 24px;">NetId_moviespertid.html</code> and add the properties to the CSS <code>&lt;style&gt;...&lt;/style&gt;</code> section to change the appearance of the web page :</p>
+      
+        <div style="background-color: rgba(255, 166, 0, 0.085); ">
+            <pre><code>
+&lt;!DOCTYPE html&gt;
+&lt;html lang="en"&gt;
+&lt;head&gt;
+    &lt;meta charset="UTF-8"&gt;
+    &lt;meta name="viewport" content="width=device-width, initial-scale=1.0"&gt;
+    &lt;title&gt;CSS: Cascading Style Sheets - Id selector &lt;/title&gt;
+    &lt;style&gt;
+            div {
+            border: 1px solid gray;
+            padding: 8px;
+            }
+    
+            h1 {
+            text-align: center;
+            text-transform: uppercase;
+            color: #4CAF50;
+            }
+
+            h3 {
+                text-align: left;
+                color: #4CAF50;
+            }
+        
+            p {
+            text-indent: 50px;
+            text-align: justify;
+            letter-spacing: 3px;
+            }
+            .moviestitle {
+                background-color: #4caf4f2a;
+            }
+            .highlightbook {
+                font-weight: bold;
+                background-color: #1d1f1dab;
+                color: white;
+            }
+            .highlightyear{
+                color: red;
+            }
+            #head3improve_1{
+                color: black;
+                font-size: xx-large;
+                letter-spacing: 5px;
+            }
+            #head3improve_2{
+                color: black;
+                font-size: xx-large;
+                letter-spacing: 5px;
+                text-align: right;
+            }
+            #stanlee{
+                letter-spacing: 5px;
+                color: blue;
+                font-weight: bolder;
+            }
+    &lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+
+    &lt;div&gt;
+        &lt;h1 class="moviestitle"&gt;List of movies&lt;/h1&gt;
+        &lt;h3 id="head3improve_1"&gt;Aquaman&lt;/h3&gt;
+        &lt;p&gt;
+        Aquaman is a superhero appearing in &lt;span class="highlightbook"&gt; American comic books published by DC Comics&lt;/span&gt;. Created by Paul Norris and Mort Weisinger, the character debuted in More Fun Comics #73 (&lt;span class="highlightyear"&gt; November 1941&lt;/span&gt;).
+        &lt;/p&gt;
+        &lt;h3 id="head3improve_2"&gt;Ant-Man&lt;/h3&gt;
+        &lt;p&gt;
+        Ant-Man is the name of several superheroes appearing in books published by Marvel Comics. Created by &lt;span id="stanlee"&gt;Stan Lee&lt;/span&gt;, Larry Lieber and Jack Kirby, Ant-Man's first appearance was in Tales to Astonish #27 (&lt;span class="highlightyear"&gt; January 1962&lt;/span&gt;) but first appeared in costume in Tales to Astonish #35 (&lt;span class="highlightyear"&gt;September 1962&lt;/span&gt;).
+        &lt;/p&gt;
+    &lt;/div&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+            </code></pre>
+        </div>
+        <!-- END -->
+        <!-- 3 -->
+
+        <p>The <code>id</code> in every <code>h3 header</code> or in the <code>span</code> tag before <strong>Stan Lee</strong> text allow stylized the HTML text.</p>
+
+        <div>
+            <p>The Web page is the next :</p>
+            <div>
+                <iframe 
+                style="width:100%; height:360px;"
+                srcdoc='<!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>CSS: Cascading Style Sheets - Id selector </title>
+                    <style>
+                            div {
+                            border: 1px solid gray;
+                            padding: 8px;
+                            }
+                    
+                            h1 {
+                            text-align: center;
+                            text-transform: uppercase;
+                            color: #4CAF50;
+                            }
+                
+                            h3 {
+                                text-align: left;
+                                color: #4CAF50;
+                            }
+                        
+                            p {
+                            text-indent: 50px;
+                            text-align: justify;
+                            letter-spacing: 3px;
+                            }
+                            .moviestitle {
+                                background-color: #4caf4f2a;
+                            }
+                            .highlightbook {
+                                font-weight: bold;
+                                background-color: #1d1f1dab;
+                                color: white;
+                            }
+                            .highlightyear{
+                                color: red;
+                            }
+                            #head3improve_1{
+                                color: black;
+                                font-size: xx-large;
+                                letter-spacing: 5px;
+                            }
+                            #head3improve_2{
+                                color: black;
+                                font-size: xx-large;
+                                letter-spacing: 5px;
+                                text-align: right;
+                            }
+                            #stanlee{
+                                letter-spacing: 5px;
+                                color: blue;
+                                font-weight: bolder;
+                            }
+                    </style>
+                </head>
+                <body>
+                
+                    <div>
+                        <h1 class="moviestitle">List of movies</h1>
+                        <h3 id="head3improve_1">Aquaman</h3>
+                        <p>
+                        Aquaman is a superhero appearing in <span class="highlightbook"> American comic books published by DC Comics</span>. Created by Paul Norris and Mort Weisinger, the character debuted in More Fun Comics #73 (<span class="highlightyear"> November 1941</span>).
+                        </p>
+                        <h3 id="head3improve_2">Ant-Man</h3>
+                        <p>
+                        Ant-Man is the name of several superheroes appearing in books published by Marvel Comics. Created by <span id="stanlee">Stan Lee</span>, Larry Lieber and Jack Kirby, Ant-Man's first appearance was in Tales to Astonish #27 (<span class="highlightyear"> January 1962</span>) but first appeared in costume in Tales to Astonish #35 (<span class="highlightyear">September 1962</span>).
+                        </p>
+                    </div>
+                
+                </body>
+                </html>
+                '>
+            </iframe>
+            </div>
+        </div>
+
+    </div>
+    <!-- END Id selector -->
+
+
+
+    <!-- Start final part, where students construct a Web page with a summary of the work indicating the type of selectors that we use in this Activity. -->
+    <br>
+    <div style="font-size: 0.85rem;">
+        <h1 style="font-size: 2rem;">Summary of the CSS SELECTORS.</h1>
+        <p>So far you have 3 Web pages :</p>
+        <ul style="font-family: 'Courier New', Courier, monospace;">    
+            <li><code>netId_moviespertag.html</code></li>
+            <li><code>netId_moviesperclass.html</code></li>
+            <li><code>netId_moviesperid.html</code></li>
+        </ul>
+
+        <h2>Final instructions :</h2>
+        <p style="
+    max-width: 900px;
+    font-size: 1rem;
+    color: var(--text-muted);
+    margin-top: 10px;
+    line-height: 1.6;
+">
+    Finally, create a Web page with name
+    <code>netId_css_selectors.html</code> and
+    <code>&lt;title&gt;CSS: Cascading Style Sheets - Summary&lt;/title&gt;</code>.
+    <br>
+    Then add the next list of stylesheet attributes, and identify what type of selector is
+    (<code>tag</code>, <code>class</code>, or <code>id</code>) and add a brief explanation of why you say it is of that type.
+</p>
+
+        <div style="background-color: rgba(255, 166, 0, 0.085); ">
+            <pre ><code>
+
+&lt;h3&gt;#head3improve_2{color: black;}  &lt;/h3&gt;
+
+    &lt;p&gt;Selector : __________&lt;/p&gt;
+    &lt;p&gt;Why ? : ________________________________________________&lt;/p&gt;
+    
+&lt;h3&gt;.moviestitle {background-color: #4caf4f2a;}&lt;/h3&gt;
+
+    &lt;p&gt;Type : __________&lt;/p&gt;
+    &lt;p&gt;Why ? : ________________________________________________&lt;/p&gt;
+
+&lt;h3&gt;p {text-indent: 50px;text-align: justify;}  &lt;/h3&gt;
+
+    &lt;p&gt;Type : __________&lt;/p&gt;
+    &lt;p&gt;Why ? : ________________________________________________&lt;/p&gt;
+
+&lt;h3&gt;.highlightbook {font-weight: bold;color: white;}&lt;/h3&gt;
+
+    &lt;p&gt;Type : __________&lt;/p&gt;
+    &lt;p&gt;Why ? : ________________________________________________&lt;/p&gt;
+
+&lt;h3&gt;#stanlee{letter-spacing: 5px;color: blue;}&lt;/h3&gt;
+
+    &lt;p&gt;Type : __________&lt;/p&gt;
+    &lt;p&gt;Why ? : ________________________________________________&lt;/p&gt;
+
+&lt;h3&gt;h3 {text-align: left;color: #4CAF50;}&lt;/h3&gt;
+
+    &lt;p&gt;Type : __________&lt;/p&gt;
+    &lt;p&gt;Why ? : ________________________________________________&lt;/p&gt;
+ 
+            </pre></code>
+        </div>
+
+        <div style="margin-left:35px">
+            <h3>Some hints:</h3>
+            <p>Create a <code>&lt;h3&gt;...&lt;/h3&gt;</code> per each type. </p>
+            <div style="margin-left:2.5em">
+                <p>And a <code>&lt;p&gt;...&lt;/p&gt;</code> to write Type. </p>
+                <p>And a <code>&lt;p&gt;...&lt;/p&gt;</code> to write Why. </p>
+            </div>
+        </div>
+    </div>
+
+    <br>
+        <div>
+        <p><strong>What to submit?</strong> <br>
+        <ul style="font-family: 'Courier New', Courier, monospace;">    
+            <li><code>netId_moviespertag.html</code></li>
+            <li><code>netId_moviesperclass.html</code></li>
+            <li><code>netId_moviesperid.html</code></li>
+            <li><code>netId_css_selectors.html</code></li>
+        </ul>
+    </div>
+
+    <br>
+    <div>
+        <p><strong>References:</strong> <br>
+        <a href="https://developer.mozilla.org/en-US/docs/Web/CSS"><u>https://developer.mozilla.org/en-US/docs/Web/CSS</u></a> <br>
+        <a href="https://developer.mozilla.org/en-US/docs/Web/CSS/Layout_cookbook"><u>https://developer.mozilla.org/en-US/docs/Web/CSS/Layout_cookbook</u></a></p>
+    </div>
+
+    <footer>
+        <p style="font-size:small;">
+            <span style="color: #ff0000; font-size: medium;">Dr. Sarfaraz Ahmed Mohammed & Dr. Ali Jannesari</span>
+            <span style="color: rgb(234,7,43);font-size: small;">Iowa State University, Spring 2026 </span>
+        </p>
+    </footer>
+</body>
+
+</html>
