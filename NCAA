@@ -1,0 +1,18 @@
+# NCAA - CS319 Project
+
+## Overview
+This file is the main project document for the NCAA-related work in this repository.
+
+## Repository structure
+- **NCAA** (this file) – main project document
+- **cs319_ass1/** – Assignment 1 (team site: index, team, technology, apparel, faq)
+- **IC6/** – In-class Activity 06 (variables, operators, arrays)
+- **IC7/** – In-class Activity 07 (functions & objects)
+- **plumbing/** – Plumbing/Firebase project
+
+## GitHub
+- Remote: https://github.com/Tencide/emeregencyPlum.git
+- Branch: main
+
+---
+*Last updated: Feb 19, 2026*
