@@ -7,14 +7,14 @@ import { UnifiedGameLayout } from '@/ui/components/UnifiedGameLayout';
 function GameRoot() {
   const { screen } = useGame();
   return (
-    <div className="min-h-[100dvh] min-h-screen bg-slate-50 dark:bg-zinc-950 flex items-center justify-center p-4 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] overflow-auto">
+    <div className="min-h-screen bg-slate-50 dark:bg-zinc-950 flex items-center justify-center p-4">
       {screen === 'create' && <CreateScreen />}
       {screen === 'game' && <UnifiedGameLayout />}
     </div>
   );
 }
 
-export default function Home() {
+export default function NotFound() {
   return (
     <GameProvider>
       <GameRoot />

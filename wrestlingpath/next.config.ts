@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
   output: "export",
   basePath: basePath || undefined,
   assetPrefix: basePath ? `${basePath}/` : undefined,
+  turbopack: {
+    root: process.cwd(),
+  },
 };
 
 export default nextConfig;

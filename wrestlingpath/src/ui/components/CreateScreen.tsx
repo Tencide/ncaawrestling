@@ -95,26 +95,26 @@ export function CreateScreen() {
   const weights = UnifiedEngine.getWeightClasses();
 
   return (
-    <div className="max-w-md mx-auto p-8 rounded-xl bg-zinc-800/90 border border-zinc-700 shadow-xl">
-      <h1 className="text-2xl font-bold text-amber-400 mb-2">Wrestling Career Sim</h1>
-      <p className="text-zinc-400 text-sm mb-6">One game: high school → college. Week-by-week choices, state/NCAA, Fargo, rankings, recruiting.</p>
+    <div className="max-w-md mx-auto p-4 sm:p-8 rounded-xl bg-slate-100 dark:bg-zinc-800/90 border border-slate-200 dark:border-zinc-700 shadow-xl min-h-0">
+      <h1 className="text-xl sm:text-2xl font-bold text-blue-600 dark:text-blue-400 mb-2">Wrestling Career Sim</h1>
+      <p className="text-slate-600 dark:text-zinc-400 text-sm mb-6">One game: high school → college. Week-by-week choices, state/NCAA, Fargo, rankings, recruiting.</p>
       <div className="space-y-4">
         <div>
-          <label className="block text-xs font-medium text-zinc-500 mb-1">Name</label>
+          <label className="block text-xs font-medium text-slate-500 dark:text-zinc-500 mb-1">Name</label>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Your name"
-            className="w-full rounded-lg bg-zinc-900 border border-zinc-600 px-3 py-2 text-white placeholder-zinc-500"
+            className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-600 px-3 py-3 min-h-[48px] text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-zinc-500 touch-manipulation"
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-zinc-500 mb-1">Weight class (lbs)</label>
+          <label className="block text-xs font-medium text-slate-500 dark:text-zinc-500 mb-1">Weight class (lbs)</label>
           <select
             value={weightClass}
             onChange={(e) => setWeightClass(Number(e.target.value))}
-            className="w-full rounded-lg bg-zinc-900 border border-zinc-600 px-3 py-2 text-white"
+            className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-600 px-3 py-3 min-h-[48px] text-slate-900 dark:text-white touch-manipulation"
           >
             {weights.map((w) => (
               <option key={w} value={w}>{w}</option>
@@ -122,35 +122,35 @@ export function CreateScreen() {
           </select>
         </div>
         <div>
-          <label className="block text-xs font-medium text-zinc-500 mb-1">Seed (for save/load)</label>
+          <label className="block text-xs font-medium text-slate-500 dark:text-zinc-500 mb-1">Seed (for save/load)</label>
           <input
             type="text"
             value={seed}
             onChange={(e) => setSeed(e.target.value)}
-            className="w-full rounded-lg bg-zinc-900 border border-zinc-600 px-3 py-2 text-white font-mono text-sm"
+            className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-600 px-3 py-3 min-h-[48px] text-slate-900 dark:text-white font-mono text-sm touch-manipulation"
           />
         </div>
-        <div className="pt-2 border-t border-zinc-600">
-          <label className="flex items-center gap-2 cursor-pointer">
+        <div className="pt-2 border-t border-slate-300 dark:border-zinc-600">
+          <label className="flex items-center gap-3 cursor-pointer min-h-[44px] py-2">
             <input
               type="checkbox"
               checked={customStart}
               onChange={(e) => setCustomStart(e.target.checked)}
-              className="rounded border-zinc-500 bg-zinc-900 text-amber-500"
+              className="rounded border-slate-400 dark:border-zinc-500 bg-white dark:bg-zinc-900 text-blue-600 dark:text-blue-500 w-5 h-5 shrink-0 touch-manipulation"
             />
-            <span className="text-sm text-zinc-300">Custom start</span>
+            <span className="text-sm text-slate-700 dark:text-zinc-300">Custom start</span>
           </label>
           {customStart && (
             <div className="mt-3 grid grid-cols-2 gap-3 pl-6">
               <div>
-                <label className="block text-xs text-zinc-500 mb-0.5">Age</label>
+                <label className="block text-xs text-slate-500 dark:text-zinc-500 mb-0.5">Age</label>
                 <input
                   type="number"
                   min={14}
                   max={24}
                   value={customAge}
                   onChange={(e) => setCustomAge(Number(e.target.value) || 14)}
-                  className="w-full rounded-lg bg-zinc-900 border border-zinc-600 px-2 py-1.5 text-white text-sm"
+                  className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-600 px-2 py-2 min-h-[44px] text-slate-900 dark:text-white text-sm touch-manipulation"
                 />
               </div>
               <div>
@@ -160,26 +160,26 @@ export function CreateScreen() {
                   min={1}
                   value={customYear}
                   onChange={(e) => setCustomYear(Math.max(1, Number(e.target.value) || 1))}
-                  className="w-full rounded-lg bg-zinc-900 border border-zinc-600 px-2 py-1.5 text-white text-sm"
+                  className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-600 px-2 py-2 min-h-[44px] text-slate-900 dark:text-white text-sm touch-manipulation"
                 />
               </div>
               <div>
-                <label className="block text-xs text-zinc-500 mb-0.5">Week (1–52)</label>
+                <label className="block text-xs text-slate-500 dark:text-zinc-500 mb-0.5">Week (1–52)</label>
                 <input
                   type="number"
                   min={1}
                   max={52}
                   value={customWeek}
                   onChange={(e) => setCustomWeek(Math.max(1, Math.min(52, Number(e.target.value) || 1)))}
-                  className="w-full rounded-lg bg-zinc-900 border border-zinc-600 px-2 py-1.5 text-white text-sm"
+                  className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-600 px-2 py-2 min-h-[44px] text-slate-900 dark:text-white text-sm touch-manipulation"
                 />
               </div>
               <div>
-                <label className="block text-xs text-zinc-500 mb-0.5">League</label>
+                <label className="block text-xs text-slate-500 dark:text-zinc-500 mb-0.5">League</label>
                 <select
                   value={customLeague}
                   onChange={(e) => setCustomLeague(e.target.value as LeagueKey)}
-                  className="w-full rounded-lg bg-zinc-900 border border-zinc-600 px-2 py-1.5 text-white text-sm"
+                  className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-600 px-2 py-2 min-h-[44px] text-slate-900 dark:text-white text-sm touch-manipulation"
                 >
                   {LEAGUES.map((l) => (
                     <option key={l.value} value={l.value}>{l.label}</option>
@@ -189,13 +189,13 @@ export function CreateScreen() {
             </div>
           )}
           {customStart && (
-            <div className="mt-3 pl-6 border-t border-zinc-600 pt-3">
+            <div className="mt-3 pl-6 border-t border-slate-300 dark:border-zinc-600 pt-3">
               <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-                <span className="text-xs font-medium text-amber-400/90">Edit stats (custom start only)</span>
+                <span className="text-xs font-medium text-blue-600 dark:text-blue-400/90">Edit stats (custom start only)</span>
                 <button
                   type="button"
                   onClick={handleMaxAllStats}
-                  className="rounded bg-amber-600/80 px-2 py-1 text-xs font-medium text-white hover:bg-amber-500"
+                  className="rounded-lg bg-blue-600 dark:bg-blue-500/80 px-3 py-2 min-h-[44px] text-xs font-medium text-white hover:bg-blue-500 dark:hover:bg-blue-400 active:bg-blue-700 dark:active:bg-blue-600 touch-manipulation"
                 >
                   Max all stats
                 </button>
@@ -217,7 +217,7 @@ export function CreateScreen() {
                   { label: 'Recruiting', val: customRecruiting, set: setCustomRecruiting, min: 0, max: 100 },
                 ].map(({ label, val, set, min, max }) => (
                   <div key={label}>
-                    <label className="block text-xs text-zinc-500 mb-0.5">{label}</label>
+                    <label className="block text-xs text-slate-500 dark:text-zinc-500 mb-0.5">{label}</label>
                     <input
                       type="number"
                       min={min}
@@ -227,7 +227,7 @@ export function CreateScreen() {
                     const n = Number(e.target.value);
                     if (!Number.isNaN(n)) set(Math.max(min, Math.min(max, n)));
                   }}
-                      className="w-full rounded bg-zinc-900 border border-zinc-600 px-2 py-1 text-white text-sm"
+                      className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-600 px-2 py-2 min-h-[44px] text-slate-900 dark:text-white text-sm touch-manipulation"
                     />
                   </div>
                 ))}
@@ -236,11 +236,11 @@ export function CreateScreen() {
           )}
         </div>
       </div>
-      <div className="mt-6 flex gap-3">
+      <div className="mt-6 flex flex-col sm:flex-row gap-3">
         <button
           type="button"
           onClick={handleStart}
-          className="flex-1 rounded-lg bg-amber-600 py-3 font-semibold text-white hover:bg-amber-500"
+          className="flex-1 rounded-lg bg-blue-600 dark:bg-blue-500 py-4 sm:py-3 min-h-[52px] font-semibold text-white hover:bg-blue-500 dark:hover:bg-blue-400 active:bg-blue-700 dark:active:bg-blue-600 touch-manipulation"
         >
           Start career
         </button>
@@ -251,7 +251,7 @@ export function CreateScreen() {
               const saved = loadGame();
               if (saved) loadIntoEngine(saved as import('@/engine/unified/types').UnifiedState);
             }}
-            className="rounded-lg bg-zinc-600 py-3 px-4 font-medium text-white hover:bg-zinc-500"
+            className="rounded-lg bg-slate-500 dark:bg-zinc-600 py-4 sm:py-3 min-h-[52px] px-4 font-medium text-white hover:bg-slate-600 dark:hover:bg-zinc-500 active:bg-slate-700 dark:active:bg-zinc-700 touch-manipulation"
           >
             Load game
           </button>
