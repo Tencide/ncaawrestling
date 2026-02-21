@@ -443,7 +443,7 @@ export class UnifiedEngine {
     const key = category;
     const order = orders[key];
     const current = L[key];
-    const idx = order.indexOf(current);
+    const idx = (order as readonly (HousingTier | CarTier | MealPlanTier | RecoveryTier)[]).indexOf(current as HousingTier | CarTier | MealPlanTier | RecoveryTier);
     if (idx < 0 || idx >= order.length - 1) return null;
     const next = order[idx + 1] as HousingTier | CarTier | MealPlanTier | RecoveryTier;
     const labels: Record<string, string> = {
@@ -485,15 +485,16 @@ export class UnifiedEngine {
     const s = this.state;
     const L = s.lifestyle ?? UnifiedEngine.DEFAULT_LIFESTYLE;
     const orders = { housing: UnifiedEngine.HOUSING_ORDER, car: UnifiedEngine.CAR_ORDER, mealPlan: UnifiedEngine.MEAL_PLAN_ORDER, recoveryEquipment: UnifiedEngine.RECOVERY_ORDER };
-    const order = orders[category];
-    const currentIdx = order.indexOf(L[category]);
+    const order = orders[category] as readonly (HousingTier | CarTier | MealPlanTier | RecoveryTier)[];
+    const current = L[category] as HousingTier | CarTier | MealPlanTier | RecoveryTier;
+    const currentIdx = order.indexOf(current);
     const targetIdx = order.indexOf(tier);
     if (targetIdx <= currentIdx) return { success: false, message: 'Already at that tier or invalid.' };
     const oneTime = category === 'car' ? UnifiedEngine.CAR_COST[tier as CarTier] : category === 'recoveryEquipment' ? UnifiedEngine.RECOVERY_COST[tier as RecoveryTier] : 0;
     const money = s.money ?? 0;
     if (oneTime > money) return { success: false, message: `Need $${oneTime}; you have $${money}.` };
     if (!s.lifestyle) s.lifestyle = { ...UnifiedEngine.DEFAULT_LIFESTYLE };
-    s.lifestyle[category] = tier;
+    (s.lifestyle as unknown as Record<string, HousingTier | CarTier | MealPlanTier | RecoveryTier>)[category] = tier;
     if (oneTime > 0) s.money = Math.max(0, money - oneTime);
     addStory(s, `Upgraded ${category}: now ${tier}.`);
     this.saveRng();
@@ -504,15 +505,16 @@ export class UnifiedEngine {
   upgradeLifestyleWeekly(category: 'housing' | 'mealPlan', tier: HousingTier | MealPlanTier): { success: boolean; message: string } {
     const s = this.state;
     const L = s.lifestyle ?? UnifiedEngine.DEFAULT_LIFESTYLE;
-    const order = category === 'housing' ? UnifiedEngine.HOUSING_ORDER : UnifiedEngine.MEAL_PLAN_ORDER;
-    const currentIdx = order.indexOf(L[category]);
+    const order = (category === 'housing' ? UnifiedEngine.HOUSING_ORDER : UnifiedEngine.MEAL_PLAN_ORDER) as readonly (HousingTier | MealPlanTier)[];
+    const current = L[category] as HousingTier | MealPlanTier;
+    const currentIdx = order.indexOf(current);
     const targetIdx = order.indexOf(tier);
     if (targetIdx <= currentIdx) return { success: false, message: 'Already at that tier or invalid.' };
     const weekly = category === 'housing' ? UnifiedEngine.HOUSING_WEEKLY[tier as HousingTier] : UnifiedEngine.MEAL_PLAN_WEEKLY[tier as MealPlanTier];
     const money = s.money ?? 0;
     if (weekly > money) return { success: false, message: `You need $${weekly} (one week) in the bank to switch; you have $${money}.` };
     if (!s.lifestyle) s.lifestyle = { ...UnifiedEngine.DEFAULT_LIFESTYLE };
-    s.lifestyle[category] = tier;
+    (s.lifestyle as unknown as Record<string, HousingTier | MealPlanTier>)[category] = tier;
     addStory(s, `Upgraded ${category}: now ${tier} ($${weekly}/wk).`);
     this.saveRng();
     return { success: true, message: `You upgraded to ${tier}. $${weekly}/week.` };
@@ -820,11 +822,11 @@ export class UnifiedEngine {
     const hasNeed = (sc: School) => needAt(sc) >= 1;
 
     const byDivision = {
-      D1: SCHOOLS.filter((sc) => sc.division === 'D1' && meetsGPA && hasNeed(sc)),
-      D2: SCHOOLS.filter((sc) => sc.division === 'D2' && meetsGPA && hasNeed(sc)),
-      D3: SCHOOLS.filter((sc) => sc.division === 'D3' && meetsGPA && hasNeed(sc)),
-      NAIA: SCHOOLS.filter((sc) => sc.division === 'NAIA' && meetsGPA && hasNeed(sc)),
-      JUCO: SCHOOLS.filter((sc) => sc.division === 'JUCO' && meetsGPA && hasNeed(sc)),
+      D1: SCHOOLS.filter((sc) => sc.division === 'D1' && meetsGPA(sc) && hasNeed(sc)),
+      D2: SCHOOLS.filter((sc) => sc.division === 'D2' && meetsGPA(sc) && hasNeed(sc)),
+      D3: SCHOOLS.filter((sc) => sc.division === 'D3' && meetsGPA(sc) && hasNeed(sc)),
+      NAIA: SCHOOLS.filter((sc) => sc.division === 'NAIA' && meetsGPA(sc) && hasNeed(sc)),
+      JUCO: SCHOOLS.filter((sc) => sc.division === 'JUCO' && meetsGPA(sc) && hasNeed(sc)),
     };
     if (byDivision.JUCO.length === 0) byDivision.JUCO = SCHOOLS.filter((sc) => sc.division === 'JUCO');
     if (byDivision.NAIA.length === 0) byDivision.NAIA = SCHOOLS.filter((sc) => sc.division === 'NAIA');
