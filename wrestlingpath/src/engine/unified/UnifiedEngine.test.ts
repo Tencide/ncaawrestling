@@ -109,8 +109,9 @@ describe('UnifiedEngine – HS scheduling and sim', () => {
     const s = engine.getState();
     expect(s.week).toBe(41);
     expect(s.lastWeekSummary?.eventType).toBe('tournament');
-    expect((s.lastWeekSummary?.matches?.length ?? 0)).toBeGreaterThanOrEqual(3);
-    expect((s.lastWeekSummary?.matches?.length ?? 0)).toBeLessThanOrEqual(6);
+    // Double-elim 8-man: 2 matches (e.g. out in quarters + conso R1) up to 5 (e.g. 2nd place through conso)
+    expect((s.lastWeekSummary?.matches?.length ?? 0)).toBeGreaterThanOrEqual(2);
+    expect((s.lastWeekSummary?.matches?.length ?? 0)).toBeLessThanOrEqual(5);
   });
 
   it('Schedule contains at least 6 duals and includes dual/tournament/rival', () => {
