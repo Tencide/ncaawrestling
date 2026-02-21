@@ -10,6 +10,8 @@ import { useEffect } from 'react';
 export function UnifiedGameLayout() {
   const { state, engine, applyChoice, applyRelationshipAction, advanceWeek, runOffseasonEvent, getCollegeOffers, getCanAdvanceWeek, acceptOffer, negotiateOffer, canEnterTransferPortal, enterTransferPortal, getTransferOffers, negotiateTransferOffer, acceptTransfer, withdrawFromTransferPortal, purchaseLifestyle, upgradeLifestyleWeekly, goToCreate } = useGame();
   const [view, setView] = useState<'play' | 'rankings' | 'trophies' | 'schedule' | 'settings' | 'relationships' | 'team' | 'college' | 'lifestyle'>('play');
+  const [playActionTab, setPlayActionTab] = useState<'training' | 'school' | 'relationship'>('training');
+  const [navExpanded, setNavExpanded] = useState(false);
   const [negotiationFeedback, setNegotiationFeedback] = useState<{ schoolId: string; kind: 'tuition' | 'nil'; success: boolean } | null>(null);
   const [viewingWeightClass, setViewingWeightClass] = useState<number | null>(null);
   const [tipsOpen, setTipsOpen] = useState(false);
@@ -35,7 +37,8 @@ export function UnifiedGameLayout() {
   const hoursLeft = state.hoursLeftThisWeek ?? 40;
 
   const tabClass = (v: typeof view) =>
-    `min-h-[44px] min-w-[44px] px-4 py-2.5 rounded-lg text-sm font-medium touch-manipulation ${view === v ? 'bg-blue-600 dark:bg-blue-500 text-white' : 'bg-slate-300 dark:bg-zinc-700 text-slate-700 dark:text-zinc-400 active:bg-slate-400 dark:active:bg-zinc-600'}`;
+    `min-h-[36px] px-2.5 py-1.5 rounded-lg text-xs font-medium touch-manipulation ${view === v ? 'bg-blue-600 dark:bg-blue-500 text-white' : 'bg-slate-300 dark:bg-zinc-700 text-slate-700 dark:text-zinc-400 active:bg-slate-400 dark:active:bg-zinc-600'}`;
+  const viewLabels: Record<typeof view, string> = { play: 'Play', rankings: 'Rankings', trophies: 'Trophies', schedule: 'Schedule', settings: 'Settings', relationships: 'Relationships', team: 'Team', college: 'College', lifestyle: 'Lifestyle' };
 
   return (
     <div className="flex flex-col md:flex-row h-screen max-h-[100dvh] bg-white dark:bg-zinc-950 text-slate-900 dark:text-zinc-200 overflow-hidden">
@@ -91,22 +94,49 @@ export function UnifiedGameLayout() {
 
       {/* Center */}
       <main className="flex-1 min-h-0 min-w-0 p-4 md:p-6 flex flex-col gap-4 overflow-y-auto overflow-x-hidden pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-        {/* Tab bar: never shrink, always visible; scroll horizontally on small screens */}
-        <div className="flex-shrink-0 w-full overflow-x-auto overflow-y-hidden scrollbar-thin scrollbar-thumb-slate-400 dark:scrollbar-thumb-zinc-600 touch-pan-x -mx-1 px-1">
-          <div className="flex gap-2 flex-nowrap min-w-min">
-            <button type="button" onClick={() => setView('play')} className={tabClass('play')}>Play</button>
-            <button type="button" onClick={() => setView('rankings')} className={tabClass('rankings')}>Rankings</button>
-            {(isHS || isInCollege) && (
-              <button type="button" onClick={() => setView('college')} className={tabClass('college')}>
-                College {state.pendingCollegeChoice ? ' (pick now)' : ''}
+        {/* Nav: expandable on mobile, compact horizontal on desktop */}
+        <div className="flex-shrink-0 w-full">
+          {/* Mobile: menu toggle + current view; expandable list */}
+          <div className="md:hidden">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setNavExpanded((e) => !e)}
+                className="rounded-lg bg-slate-300 dark:bg-zinc-700 min-h-[36px] px-3 py-2 text-xs font-medium touch-manipulation flex items-center gap-1.5"
+                aria-expanded={navExpanded}
+              >
+                <span className="inline-block w-4 h-0.5 bg-current rounded" style={{ boxShadow: '0 -5px 0 currentColor, 0 5px 0 currentColor' }} />
+                {viewLabels[view]}
               </button>
+              {navExpanded && (
+                <button type="button" onClick={() => setNavExpanded(false)} className="text-xs text-slate-500 dark:text-zinc-400">Close</button>
+              )}
+            </div>
+            {navExpanded && (
+              <div className="mt-2 p-2 rounded-lg bg-slate-100 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-600 flex flex-wrap gap-1.5 max-h-[50vh] overflow-y-auto">
+                {(['play', 'rankings', 'college', 'relationships', 'trophies', 'schedule', 'lifestyle', 'team', 'settings'] as const).filter((v) => (v !== 'college' || isHS || isInCollege) && (v !== 'team' || isInCollege)).map((v) => (
+                  <button key={v} type="button" onClick={() => { setView(v); setNavExpanded(false); }} className={tabClass(v)}>
+                    {v === 'college' && state.pendingCollegeChoice ? 'College (pick)' : viewLabels[v]}
+                  </button>
+                ))}
+              </div>
             )}
-            <button type="button" onClick={() => setView('relationships')} className={tabClass('relationships')}>Relationships</button>
-            <button type="button" onClick={() => setView('trophies')} className={tabClass('trophies')}>Trophies</button>
-            <button type="button" onClick={() => setView('schedule')} className={tabClass('schedule')}>Schedule</button>
-            <button type="button" onClick={() => setView('lifestyle')} className={tabClass('lifestyle')}>Lifestyle</button>
-            {isInCollege && <button type="button" onClick={() => setView('team')} className={tabClass('team')}>Team</button>}
-            <button type="button" onClick={() => setView('settings')} className={tabClass('settings')}>Settings</button>
+          </div>
+          {/* Desktop: horizontal scroll, smaller buttons */}
+          <div className="hidden md:block overflow-x-auto overflow-y-hidden scrollbar-thin scrollbar-thumb-slate-400 dark:scrollbar-thumb-zinc-600 touch-pan-x -mx-1 px-1">
+            <div className="flex gap-1.5 flex-nowrap min-w-min py-0.5">
+              <button type="button" onClick={() => setView('play')} className={tabClass('play')}>Play</button>
+              <button type="button" onClick={() => setView('rankings')} className={tabClass('rankings')}>Rankings</button>
+              {(isHS || isInCollege) && (
+                <button type="button" onClick={() => setView('college')} className={tabClass('college')}>College{state.pendingCollegeChoice ? ' *' : ''}</button>
+              )}
+              <button type="button" onClick={() => setView('relationships')} className={tabClass('relationships')}>Relationships</button>
+              <button type="button" onClick={() => setView('trophies')} className={tabClass('trophies')}>Trophies</button>
+              <button type="button" onClick={() => setView('schedule')} className={tabClass('schedule')}>Schedule</button>
+              <button type="button" onClick={() => setView('lifestyle')} className={tabClass('lifestyle')}>Lifestyle</button>
+              {isInCollege && <button type="button" onClick={() => setView('team')} className={tabClass('team')}>Team</button>}
+              <button type="button" onClick={() => setView('settings')} className={tabClass('settings')}>Settings</button>
+            </div>
           </div>
         </div>
 
@@ -268,14 +298,27 @@ export function UnifiedGameLayout() {
               {hoursLeft <= 0 ? (
                 <p className="text-slate-600 dark:text-zinc-400 text-sm">No hours left this week. Advance to next week to get more time.</p>
               ) : (
-                <div className="space-y-4">
-                  {['training', 'relationship', 'life'].map((tab) => {
-                    const tabChoices = choices.filter((c) => (c as { tab?: string }).tab === tab);
-                    if (tabChoices.length === 0) return null;
-                    const tabLabel = tab === 'training' ? 'Training' : tab === 'relationship' ? 'Relationship' : 'Life';
-                    return (
-                      <div key={tab}>
-                        <h4 className="text-xs font-medium text-slate-500 dark:text-zinc-500 mb-2">{tabLabel}</h4>
+                <>
+                  <div className="flex gap-1.5 mb-3 flex-wrap">
+                    {(['training', 'school', 'relationship'] as const).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setPlayActionTab(t)}
+                        className={`min-h-[32px] px-2.5 py-1.5 rounded-lg text-xs font-medium touch-manipulation ${playActionTab === t ? 'bg-blue-600 dark:bg-blue-500 text-white' : 'bg-slate-300 dark:bg-zinc-700 text-slate-700 dark:text-zinc-400'}`}
+                      >
+                        {t === 'training' ? 'Training' : t === 'school' ? 'School' : 'Relationships'}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="space-y-2">
+                    {(() => {
+                      const tabKey = playActionTab === 'school' ? 'life' : playActionTab === 'relationship' ? 'relationship' : 'training';
+                      const tabChoices = choices.filter((c) => (c as { tab?: string }).tab === tabKey);
+                      if (tabChoices.length === 0) {
+                        return <p className="text-slate-500 dark:text-zinc-500 text-sm">No actions in this category right now.</p>;
+                      }
+                      return (
                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                           {tabChoices.map((c) => {
                             const preview = engine.getChoicePreview(c.key);
@@ -291,7 +334,7 @@ export function UnifiedGameLayout() {
                                 key={c.key}
                                 type="button"
                                 onClick={() => applyChoice(c.key)}
-                                className="rounded-lg bg-slate-300 dark:bg-zinc-700 px-3 py-3 min-h-[48px] text-sm text-left hover:bg-blue-600 dark:hover:bg-blue-500 active:bg-blue-700 dark:active:bg-blue-600 transition-colors flex flex-col gap-0.5 touch-manipulation"
+                                className="rounded-lg bg-slate-300 dark:bg-zinc-700 px-3 py-2.5 min-h-[44px] text-sm text-left hover:bg-blue-600 dark:hover:bg-blue-500 active:bg-blue-700 dark:active:bg-blue-600 transition-colors flex flex-col gap-0.5 touch-manipulation"
                               >
                                 <span>{c.label}</span>
                                 <span className="text-xs text-slate-500 dark:text-zinc-500">
@@ -303,10 +346,10 @@ export function UnifiedGameLayout() {
                             );
                           })}
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })()}
+                  </div>
+                </>
               )}
             </div>
 
