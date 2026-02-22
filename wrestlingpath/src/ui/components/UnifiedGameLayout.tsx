@@ -12,6 +12,7 @@ export function UnifiedGameLayout() {
   const [view, setView] = useState<'play' | 'rankings' | 'trophies' | 'schedule' | 'settings' | 'relationships' | 'team' | 'college' | 'lifestyle'>('play');
   const [playActionTab, setPlayActionTab] = useState<'training' | 'school' | 'relationship'>('training');
   const [navExpanded, setNavExpanded] = useState(false);
+  const [leftBarOpen, setLeftBarOpen] = useState(false);
   const [negotiationFeedback, setNegotiationFeedback] = useState<{ schoolId: string; kind: 'tuition' | 'nil'; success: boolean } | null>(null);
   const [viewingWeightClass, setViewingWeightClass] = useState<number | null>(null);
   const [tipsOpen, setTipsOpen] = useState(false);
@@ -30,6 +31,42 @@ export function UnifiedGameLayout() {
 
   if (!state || !engine) return null;
 
+  function LeftBarContent({ gameState }: { gameState: NonNullable<typeof state> }) {
+    return (
+      <>
+        <div>
+          <div className="text-xs text-blue-600 dark:text-blue-400 font-semibold">{gameState.name}</div>
+          <div className="text-xs text-slate-500 dark:text-zinc-500">Age {gameState.age} · Week {gameState.week ?? 1} Year {gameState.year}</div>
+          <div className="text-lg font-bold text-slate-900 dark:text-white mt-1">{gameState.overallRating}</div>
+          <div className="text-xs text-slate-600 dark:text-zinc-400">{gameState.league.replace(/_/g, ' ')} · {gameState.weightClass} lbs</div>
+          {typeof gameState.eligibilityYearsRemaining === 'number' && (
+            <div className="text-xs text-slate-500 dark:text-zinc-500 mt-0.5">Eligibility: {gameState.eligibilityYearsRemaining} year{gameState.eligibilityYearsRemaining !== 1 ? 's' : ''} left</div>
+          )}
+        </div>
+        <div className="text-xs">
+          <div className="text-slate-500 dark:text-zinc-500 mb-1">Attributes</div>
+          <div>Tech {gameState.technique} · IQ {gameState.matIQ} · Cond {gameState.conditioning}</div>
+          <div>Str {gameState.strength} · Spd {gameState.speed} · Flex {gameState.flexibility}</div>
+        </div>
+        <div className="text-xs">
+          <div className="text-slate-500 dark:text-zinc-500 mb-1">Meters</div>
+          <div>Energy {gameState.energy} · Health {gameState.health} · Stress {gameState.stress}</div>
+          <div>Happiness {gameState.happiness} · Grades {gameState.grades}</div>
+        </div>
+        <div className="text-xs">
+          <div className="text-slate-500 dark:text-zinc-500 mb-1">Record</div>
+          <div>Season: {gameState.stats.seasonWins}-{gameState.stats.seasonLosses}</div>
+          <div>Career: {gameState.stats.matchesWon}-{gameState.stats.matchesLost}</div>
+        </div>
+        <div className="text-xs">
+          <div className="text-slate-500 dark:text-zinc-500 mb-1">Money</div>
+          <div className="text-green-600 dark:text-green-400">${gameState.money}</div>
+          <div className="text-slate-500 dark:text-zinc-500">Recruiting: {gameState.recruitingScore}</div>
+        </div>
+      </>
+    );
+  }
+
   const isInCollege = !['HS_JV', 'HS_VARSITY', 'HS_ELITE'].includes(state.league);
   const isHS = !isInCollege;
   const choices = engine.getChoices();
@@ -42,42 +79,33 @@ export function UnifiedGameLayout() {
 
   return (
     <div className="flex flex-col md:flex-row h-screen max-h-[100dvh] bg-white dark:bg-zinc-950 text-slate-900 dark:text-zinc-200 overflow-hidden">
-      {/* Left panel — desktop only */}
+      {/* Left panel — desktop: always visible; mobile: expandable drawer */}
       <aside className="hidden md:flex w-52 shrink-0 border-r border-slate-200 dark:border-zinc-700 bg-slate-50 dark:bg-zinc-900/80 p-4 flex-col gap-3 overflow-y-auto">
-        <div>
-          <div className="text-xs text-blue-600 dark:text-blue-400 font-semibold">{state.name}</div>
-          <div className="text-xs text-slate-500 dark:text-zinc-500">Age {state.age} · Week {state.week ?? 1} Year {state.year}</div>
-          <div className="text-lg font-bold text-slate-900 dark:text-white mt-1">{state.overallRating}</div>
-          <div className="text-xs text-slate-600 dark:text-zinc-400">{state.league.replace(/_/g, ' ')} · {state.weightClass} lbs</div>
-        {typeof state.eligibilityYearsRemaining === 'number' && (
-          <div className="text-xs text-slate-500 dark:text-zinc-500 mt-0.5">Eligibility: {state.eligibilityYearsRemaining} year{state.eligibilityYearsRemaining !== 1 ? 's' : ''} left</div>
-        )}
-        </div>
-        <div className="text-xs">
-          <div className="text-slate-500 dark:text-zinc-500 mb-1">Attributes</div>
-          <div>Tech {state.technique} · IQ {state.matIQ} · Cond {state.conditioning}</div>
-          <div>Str {state.strength} · Spd {state.speed} · Flex {state.flexibility}</div>
-        </div>
-        <div className="text-xs">
-          <div className="text-slate-500 dark:text-zinc-500 mb-1">Meters</div>
-          <div>Energy {state.energy} · Health {state.health} · Stress {state.stress}</div>
-          <div>Happiness {state.happiness} · Grades {state.grades}</div>
-        </div>
-        <div className="text-xs">
-          <div className="text-slate-500 dark:text-zinc-500 mb-1">Record</div>
-          <div>Season: {state.stats.seasonWins}-{state.stats.seasonLosses}</div>
-          <div>Career: {state.stats.matchesWon}-{state.stats.matchesLost}</div>
-        </div>
-        <div className="text-xs">
-          <div className="text-slate-500 dark:text-zinc-500 mb-1">Money</div>
-          <div className="text-green-600 dark:text-green-400">${state.money}</div>
-          <div className="text-slate-500 dark:text-zinc-500">Recruiting: {state.recruitingScore}</div>
-        </div>
+        <LeftBarContent gameState={state} />
       </aside>
 
-      {/* Mobile top bar: name, rating, hours, energy, $, New game */}
+      {/* Mobile: left bar as slide-out drawer */}
+      {leftBarOpen && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/50 md:hidden" aria-hidden onClick={() => setLeftBarOpen(false)} />
+          <aside className="fixed top-0 left-0 z-50 w-[min(18rem,85vw)] h-full border-r border-slate-200 dark:border-zinc-700 bg-slate-50 dark:bg-zinc-900 shadow-xl md:hidden flex flex-col overflow-hidden">
+            <div className="shrink-0 p-3 border-b border-slate-200 dark:border-zinc-700 flex items-center justify-between">
+              <span className="text-sm font-medium text-slate-700 dark:text-zinc-300">Stats &amp; info</span>
+              <button type="button" onClick={() => setLeftBarOpen(false)} className="rounded-lg p-2 text-slate-500 dark:text-zinc-400 active:bg-slate-200 dark:active:bg-zinc-700 touch-manipulation" aria-label="Close">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              <LeftBarContent gameState={state} />
+            </div>
+          </aside>
+        </>
+      )}
+
+      {/* Mobile top bar: open stats (left bar), name, rating, hours, energy, $, New game */}
       <header className="md:hidden shrink-0 border-b border-slate-200 dark:border-zinc-700 bg-slate-100 dark:bg-zinc-900/95 px-3 py-2 flex items-center justify-between gap-2 flex-wrap">
-        <div className="flex items-center gap-2 min-w-0">
+        <button type="button" onClick={() => setLeftBarOpen(true)} className="rounded-lg p-2 min-h-[40px] min-w-[40px] flex items-center justify-center bg-slate-300 dark:bg-zinc-700 text-slate-700 dark:text-zinc-300 active:bg-slate-400 dark:active:bg-zinc-600 touch-manipulation" aria-label="Open stats">
+          <span className="text-base font-bold leading-none">≡</span>
+        </button>
+        <div className="flex items-center gap-2 min-w-0 flex-1 justify-center">
           <span className="text-blue-600 dark:text-blue-400 font-semibold truncate">{state.name}</span>
           <span className="text-slate-900 dark:text-white font-bold">{state.overallRating}</span>
           <span className="text-slate-500 dark:text-zinc-500 text-xs">{state.weightClass} lbs</span>
