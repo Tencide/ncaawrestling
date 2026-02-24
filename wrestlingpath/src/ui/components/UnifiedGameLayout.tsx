@@ -1,25 +1,92 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useGame } from '@/ui/context/GameContext';
-import type { HousingTier, CarTier, MealPlanTier, RecoveryTier } from '@/engine/unified/types';
+import type { HousingTier, CarTier, MealPlanTier, RecoveryTier, BracketParticipant } from '@/engine/unified/types';
 import { saveGame } from '@/db/persistence';
 import { UnifiedEngine } from '@/engine/unified/UnifiedEngine';
-import { useEffect } from 'react';
+import type { ExchangeLogEntry } from '@/engine/MatchMinigame';
+import { DECISION_TIMER_SECONDS } from '@/engine/MatchMinigame';
 
 export function UnifiedGameLayout() {
-  const { state, engine, applyChoice, applyRelationshipAction, advanceWeek, runOffseasonEvent, getCollegeOffers, getCanAdvanceWeek, acceptOffer, negotiateOffer, canEnterTransferPortal, enterTransferPortal, getTransferOffers, negotiateTransferOffer, acceptTransfer, withdrawFromTransferPortal, purchaseLifestyle, upgradeLifestyleWeekly, goToCreate } = useGame();
-  const [view, setView] = useState<'play' | 'rankings' | 'trophies' | 'schedule' | 'settings' | 'relationships' | 'team' | 'college' | 'lifestyle'>('play');
+  const { state, engine, applyChoice, applyRelationshipAction, advanceWeek, advanceWeeks, autoTrainOnAdvance, setAutoTrainOnAdvance, runOffseasonEvent, getCollegeOffers, getSchools, requestCollegeOffer, getCanAdvanceWeek, acceptOffer, negotiateOffer, canEnterTransferPortal, enterTransferPortal, getTransferOffers, requestTransferOffer, negotiateTransferOffer, acceptTransfer, withdrawFromTransferPortal, purchaseLifestyle, upgradeLifestyleWeekly, purchaseCustomItem, getPendingLifePopups, resolveLifePopup, getLifeLog, playCompetitionAction, getPendingTournamentPlay, startTournamentPlay, simulateTournamentBracket, simulatePendingCompetitionMatch, choosePostCollegeOption, setWeightClass, goToCreate } = useGame();
+  const [view, setView] = useState<'play' | 'rankings' | 'trophies' | 'schedule' | 'settings' | 'relationships' | 'team' | 'college' | 'lifestyle' | 'life'>('play');
   const [playActionTab, setPlayActionTab] = useState<'training' | 'school' | 'relationship'>('training');
   const [navExpanded, setNavExpanded] = useState(false);
   const [leftBarOpen, setLeftBarOpen] = useState(false);
-  const [negotiationFeedback, setNegotiationFeedback] = useState<{ schoolId: string; kind: 'tuition' | 'nil'; success: boolean } | null>(null);
+  const [negotiationFeedback, setNegotiationFeedback] = useState<{ schoolId: string; kind: 'tuition' | 'nil'; success: boolean; message?: string } | null>(null);
+  const [requestOfferMessage, setRequestOfferMessage] = useState<string | null>(null);
+  const [requestTransferMessage, setRequestTransferMessage] = useState<string | null>(null);
   const [viewingWeightClass, setViewingWeightClass] = useState<number | null>(null);
   const [tipsOpen, setTipsOpen] = useState(false);
+  const [lastOffseasonBracket, setLastOffseasonBracket] = useState<{ name: string; participants: BracketParticipant[] } | null>(null);
+  const prevWeekRef = useRef<number | undefined>(undefined);
+  const [tournamentRevealCount, setTournamentRevealCount] = useState<number>(0);
+  const pendingComp = state?.pendingCompetition ?? null;
+  const [exchangeTimerLeft, setExchangeTimerLeft] = useState<number>(pendingComp?.current?.timerSeconds ?? DECISION_TIMER_SECONDS);
+  const [autoFiredKey, setAutoFiredKey] = useState<string | null>(null);
+  const fmtNIL = (n: number) => n >= 1000 ? (n >= 1_000_000 ? `${Math.round(n / 1_000_000)}M` : `${Math.round(n / 1000)}K`) : n.toLocaleString();
+  const fmtOfferType = (t?: string) => { switch (t) { case 'full': return 'Full scholarship'; case 'partial': return 'Partial'; case 'preferred_walkon': return 'Preferred walk-on'; case 'walkon': return 'Walk-on'; default: return 'Full'; } };
+
+  /** One-line summary of an exchange for the match log. */
+  function formatExchangeLogEntry(e: ExchangeLogEntry): string {
+    const p = `P${e.period} ${e.position}`;
+    if (e.timedOut) {
+      const them = e.pointsAgainst > 0 ? ` Opponent scores ${e.pointsAgainst}.` : '';
+      return `${p}: You hesitated (timer).${them}`;
+    }
+    if (e.success) {
+      const you = e.pointsFor > 0 ? ` You score ${e.pointsFor}.` : '';
+      return `${p}: ${e.actionLabel} — success.${you}`;
+    }
+    const them = e.pointsAgainst > 0 ? ` Opponent scores ${e.pointsAgainst}.` : ' They defend.';
+    return `${p}: ${e.actionLabel} — no.${them}`;
+  }
 
   useEffect(() => {
     if (state) saveGame(state);
   }, [state]);
+
+  // Reset exchange timer whenever a new exchange prompt is shown
+  useEffect(() => {
+    if (!pendingComp?.current) return;
+    const key = `${pendingComp.current.id}_${pendingComp.current.matchState.period}_${pendingComp.current.prompt.prompt}`;
+    setExchangeTimerLeft(pendingComp.current.timerSeconds ?? DECISION_TIMER_SECONDS);
+    setAutoFiredKey(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingComp?.current?.id, pendingComp?.current?.matchState?.period, pendingComp?.current?.prompt?.prompt]);
+
+  // Countdown + auto-hesitate on timeout
+  useEffect(() => {
+    if (!pendingComp?.current) return;
+    const key = `${pendingComp.current.id}_${pendingComp.current.matchState.period}_${pendingComp.current.prompt.prompt}`;
+    if (exchangeTimerLeft <= 0) {
+      if (autoFiredKey === key) return;
+      setAutoFiredKey(key);
+      playCompetitionAction('hesitate', { timedOut: true });
+      return;
+    }
+    const t = window.setTimeout(() => setExchangeTimerLeft((x) => x - 1), 1000);
+    return () => window.clearTimeout(t);
+  }, [pendingComp?.current, exchangeTimerLeft, autoFiredKey, playCompetitionAction]);
+
+  useEffect(() => {
+    if (state?.week != null && prevWeekRef.current !== state.week) {
+      prevWeekRef.current = state.week;
+      setLastOffseasonBracket(null);
+      setTournamentRevealCount(0);
+    }
+  }, [state?.week]);
+
+  useEffect(() => {
+    // Reset tournament mini-game reveal when a new week summary arrives
+    if (!state?.lastWeekSummary || state.lastWeekSummary.eventType !== 'tournament') {
+      setTournamentRevealCount(0);
+      return;
+    }
+    // Start at 0 revealed matches whenever the tournament summary changes
+    setTournamentRevealCount(0);
+  }, [state?.lastWeekSummary?.week, state?.lastWeekSummary?.year, state?.lastWeekSummary?.eventType]);
 
   useEffect(() => {
     setViewingWeightClass(null);
@@ -28,6 +95,9 @@ export function UnifiedGameLayout() {
   useEffect(() => {
     if (state?.pendingCollegeChoice) setView('college');
   }, [state?.pendingCollegeChoice]);
+  useEffect(() => {
+    if (state?.pendingCollegeGraduation || state?.careerEnded) setView('play');
+  }, [state?.pendingCollegeGraduation, state?.careerEnded]);
 
   if (!state || !engine) return null;
 
@@ -75,10 +145,127 @@ export function UnifiedGameLayout() {
 
   const tabClass = (v: typeof view) =>
     `min-h-[36px] px-2.5 py-1.5 rounded-lg text-xs font-medium touch-manipulation ${view === v ? 'bg-blue-600 dark:bg-blue-500 text-white' : 'bg-slate-300 dark:bg-zinc-700 text-slate-700 dark:text-zinc-400 active:bg-slate-400 dark:active:bg-zinc-600'}`;
-  const viewLabels: Record<typeof view, string> = { play: 'Play', rankings: 'Rankings', trophies: 'Trophies', schedule: 'Schedule', settings: 'Settings', relationships: 'Relationships', team: 'Team', college: 'College', lifestyle: 'Lifestyle' };
+  const viewLabels: Record<typeof view, string> = { play: 'Play', rankings: 'Rankings', trophies: 'Trophies', schedule: 'Schedule', settings: 'Settings', relationships: 'Relationships', team: 'Team', college: 'College', lifestyle: 'Lifestyle', life: 'Life' };
+  const pendingPopups = getPendingLifePopups();
+  const currentPopup = pendingPopups[0];
+  const lifeLog = getLifeLog();
 
   return (
     <div className="flex flex-col md:flex-row h-screen max-h-[100dvh] bg-white dark:bg-zinc-950 text-slate-900 dark:text-zinc-200 overflow-hidden">
+      {/* BitLife-style life popup modal */}
+      {currentPopup && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60" role="dialog" aria-modal="true" aria-labelledby="life-popup-title">
+          <div className="rounded-xl bg-slate-100 dark:bg-zinc-800 border-2 border-slate-300 dark:border-zinc-600 shadow-2xl max-w-md w-full p-5 flex flex-col gap-4">
+            <h2 id="life-popup-title" className="text-sm font-medium text-slate-500 dark:text-zinc-400 uppercase tracking-wide">
+              {currentPopup.category.replace(/_/g, ' · ')}
+            </h2>
+            <p className="text-slate-800 dark:text-zinc-200 text-base leading-relaxed">{currentPopup.text}</p>
+            <div className="flex flex-col gap-2">
+              {currentPopup.choices.map((choice, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => resolveLifePopup(currentPopup.id, i)}
+                  className="rounded-lg bg-slate-300 dark:bg-zinc-600 hover:bg-blue-500 dark:hover:bg-blue-600 text-slate-900 dark:text-zinc-100 px-4 py-3 text-left text-sm font-medium transition-colors touch-manipulation"
+                >
+                  {choice.label}
+                </button>
+              ))}
+            </div>
+            {pendingPopups.length > 1 && (
+              <p className="text-xs text-slate-500 dark:text-zinc-400">{pendingPopups.length - 1} more this week</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Interactive competition modal (3 exchanges per match) */}
+      {pendingComp?.current && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/70" role="dialog" aria-modal="true" aria-labelledby="match-popup-title">
+          <div className="rounded-xl bg-white dark:bg-zinc-900 border-2 border-slate-300 dark:border-zinc-700 shadow-2xl max-w-xl w-full p-5 flex flex-col gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 id="match-popup-title" className="text-sm font-semibold text-slate-800 dark:text-zinc-100">
+                  {pendingComp.phaseLabel}
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-zinc-400">
+                  {pendingComp.current.roundLabel} · vs <span className="font-medium text-slate-700 dark:text-zinc-200">{pendingComp.current.opponent.name}</span> ({Math.round(pendingComp.current.opponent.overallRating)})
+                </p>
+              </div>
+              <div className="text-right">
+                <div className="text-xs text-slate-500 dark:text-zinc-400">Decision timer</div>
+                <div className={`text-lg font-bold ${exchangeTimerLeft <= 2 ? 'text-red-600 dark:text-red-400' : 'text-blue-600 dark:text-blue-400'}`}>
+                  {Math.max(0, exchangeTimerLeft)}s
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-lg bg-slate-100 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <span className="font-medium text-slate-700 dark:text-zinc-200">
+                  Period {pendingComp.current.matchState.period} · {pendingComp.current.matchState.position}
+                </span>
+                <span className="text-slate-600 dark:text-zinc-300">
+                  Score: <span className="font-semibold">{pendingComp.current.matchState.myScore}</span>-<span className="font-semibold">{pendingComp.current.matchState.oppScore}</span>
+                </span>
+                <span className="text-slate-600 dark:text-zinc-300">
+                  Energy: <span className="font-semibold">{Math.round(pendingComp.current.matchState.my.energy)}</span>
+                </span>
+              </div>
+              <p className="text-sm text-slate-700 dark:text-zinc-200 mt-2">{pendingComp.current.prompt.prompt}</p>
+            </div>
+
+            {pendingComp.current.matchState.logs.length > 0 && (
+              <div className="rounded-lg bg-slate-50 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 p-2">
+                <p className="text-xs font-semibold text-slate-600 dark:text-zinc-400 mb-1.5">Match log</p>
+                <ul className="text-xs text-slate-700 dark:text-zinc-300 space-y-1 max-h-28 overflow-y-auto">
+                  {pendingComp.current.matchState.logs.map((entry, i) => (
+                    <li key={i} className="leading-tight">
+                      <span>{formatExchangeLogEntry(entry)}</span>
+                      {entry.notes && entry.notes.length > 0 && (
+                        <span className="block text-slate-500 dark:text-zinc-500 mt-0.5 pl-2 border-l-2 border-slate-300 dark:border-zinc-600">
+                          {entry.notes.join(' ')}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {pendingComp.current.prompt.options.map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => playCompetitionAction(opt.key)}
+                  className="rounded-lg bg-slate-200 dark:bg-zinc-700 hover:bg-blue-600 dark:hover:bg-blue-500 text-slate-900 dark:text-zinc-100 px-4 py-3 text-left text-sm font-medium transition-colors touch-manipulation"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span>{opt.label}</span>
+                    <span className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-zinc-300">{opt.risk}</span>
+                  </div>
+                  <div className="text-xs text-slate-600 dark:text-zinc-300 mt-1">{opt.description}</div>
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200 dark:border-zinc-700">
+              <button
+                type="button"
+                onClick={() => simulatePendingCompetitionMatch()}
+                className="rounded-lg bg-slate-300 dark:bg-zinc-600 hover:bg-slate-400 dark:hover:bg-zinc-500 text-slate-800 dark:text-zinc-200 px-4 py-2 text-sm font-medium touch-manipulation"
+              >
+                Simulate match
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-zinc-400">
+              If the timer hits 0, you automatically <strong>Hesitate</strong> (momentum loss + higher chance they score).
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Left panel — desktop: always visible; mobile: expandable drawer */}
       <aside className="hidden md:flex w-52 shrink-0 border-r border-slate-200 dark:border-zinc-700 bg-slate-50 dark:bg-zinc-900/80 p-4 flex-col gap-3 overflow-y-auto">
         <LeftBarContent gameState={state} />
@@ -100,24 +287,23 @@ export function UnifiedGameLayout() {
         </>
       )}
 
-      {/* Mobile top bar: open stats (left bar), name, rating, hours, energy, $, New game */}
-      <header className="md:hidden shrink-0 border-b border-slate-200 dark:border-zinc-700 bg-slate-100 dark:bg-zinc-900/95 px-3 py-2 flex items-center justify-between gap-2 flex-wrap">
-        <button type="button" onClick={() => setLeftBarOpen(true)} className="rounded-lg p-2 min-h-[40px] min-w-[40px] flex items-center justify-center bg-slate-300 dark:bg-zinc-700 text-slate-700 dark:text-zinc-300 active:bg-slate-400 dark:active:bg-zinc-600 touch-manipulation" aria-label="Open stats">
-          <span className="text-base font-bold leading-none">≡</span>
-        </button>
-        <div className="flex items-center gap-2 min-w-0 flex-1 justify-center">
-          <span className="text-blue-600 dark:text-blue-400 font-semibold truncate">{state.name}</span>
-          <span className="text-slate-900 dark:text-white font-bold">{state.overallRating}</span>
-          <span className="text-slate-500 dark:text-zinc-500 text-xs">{state.weightClass} lbs</span>
+      {/* Mobile top bar: row 1 = menu + name/rating; row 2 = Hours, Energy, $ (no New game — in Settings) */}
+      <header className="md:hidden shrink-0 border-b border-slate-200 dark:border-zinc-700 bg-slate-100 dark:bg-zinc-900/95 px-3 py-2 flex flex-col gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <button type="button" onClick={() => setLeftBarOpen(true)} className="rounded-lg p-2 min-h-[40px] min-w-[40px] flex items-center justify-center bg-slate-300 dark:bg-zinc-700 text-slate-700 dark:text-zinc-300 active:bg-slate-400 dark:active:bg-zinc-600 touch-manipulation shrink-0" aria-label="Open stats">
+            <span className="text-base font-bold leading-none">≡</span>
+          </button>
+          <div className="flex items-center gap-2 min-w-0 flex-1 justify-center">
+            <span className="text-blue-600 dark:text-blue-400 font-semibold truncate">{state.name}</span>
+            <span className="text-slate-900 dark:text-white font-bold shrink-0">{state.overallRating}</span>
+            <span className="text-slate-500 dark:text-zinc-500 text-xs shrink-0">{state.weightClass} lbs</span>
+          </div>
         </div>
-        <div className="flex items-center gap-3 text-xs text-slate-600 dark:text-zinc-400">
-          <span><span className="text-blue-600 dark:text-blue-400">H</span> {hoursLeft}</span>
-          <span><span className="text-blue-600 dark:text-blue-400">E</span> {state.energy}</span>
-          <span className="text-green-600 dark:text-green-400">${state.money}</span>
+        <div className="flex items-center gap-4 text-sm text-slate-700 dark:text-zinc-300 shrink-0">
+          <span><span className="text-blue-600 dark:text-blue-400 font-medium">Hours:</span> {hoursLeft}</span>
+          <span><span className="text-blue-600 dark:text-blue-400 font-medium">Energy:</span> {state.energy}</span>
+          <span className="text-green-600 dark:text-green-400 font-medium">${state.money}</span>
         </div>
-        <button type="button" onClick={goToCreate} className="rounded-lg bg-slate-300 dark:bg-zinc-700 px-3 py-2 text-xs font-medium text-slate-700 dark:text-zinc-300 active:bg-slate-400 dark:active:bg-zinc-600 touch-manipulation min-h-[40px]">
-          New game
-        </button>
       </header>
 
       {/* Center */}
@@ -142,7 +328,7 @@ export function UnifiedGameLayout() {
             </div>
             {navExpanded && (
               <div className="mt-2 p-2 rounded-lg bg-slate-100 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-600 flex flex-wrap gap-1.5 max-h-[50vh] overflow-y-auto">
-                {(['play', 'rankings', 'college', 'relationships', 'trophies', 'schedule', 'lifestyle', 'team', 'settings'] as const).filter((v) => (v !== 'college' || isHS || isInCollege) && (v !== 'team' || isInCollege)).map((v) => (
+                {(['play', 'rankings', 'college', 'relationships', 'trophies', 'schedule', 'lifestyle', 'life', 'team', 'settings'] as const).filter((v) => (v !== 'college' || isHS || isInCollege) && (v !== 'team' || isInCollege)).map((v) => (
                   <button key={v} type="button" onClick={() => { setView(v); setNavExpanded(false); }} className={tabClass(v)}>
                     {v === 'college' && state.pendingCollegeChoice ? 'College (pick)' : viewLabels[v]}
                   </button>
@@ -162,6 +348,7 @@ export function UnifiedGameLayout() {
               <button type="button" onClick={() => setView('trophies')} className={tabClass('trophies')}>Trophies</button>
               <button type="button" onClick={() => setView('schedule')} className={tabClass('schedule')}>Schedule</button>
               <button type="button" onClick={() => setView('lifestyle')} className={tabClass('lifestyle')}>Lifestyle</button>
+              <button type="button" onClick={() => setView('life')} className={tabClass('life')}>Life</button>
               {isInCollege && <button type="button" onClick={() => setView('team')} className={tabClass('team')}>Team</button>}
               <button type="button" onClick={() => setView('settings')} className={tabClass('settings')}>Settings</button>
             </div>
@@ -172,16 +359,17 @@ export function UnifiedGameLayout() {
         {state.pendingCollegeChoice && (
           <div className="rounded-lg bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-500 dark:border-amber-400 p-4">
             <h3 className="text-amber-800 dark:text-amber-200 font-bold text-lg mb-1">Choose your college</h3>
-            <p className="text-sm text-slate-600 dark:text-zinc-400 mb-4">You&apos;ve graduated. Everyone gets offers (D1 to JUCO depending on how you did). Pick a school and click <strong>Accept</strong> to commit — that&apos;s how you advance. You can negotiate for more scholarship or NIL first.</p>
+            <p className="text-sm text-slate-600 dark:text-zinc-400 mb-4">You&apos;ve graduated. You have offers from some schools; you can also <strong>request interest</strong> from any school below. Pick a school and click <strong>Accept</strong> to commit — negotiate for more scholarship or NIL first if you want.</p>
+            {requestOfferMessage && <p className="text-sm mb-2 text-slate-600 dark:text-zinc-400">{requestOfferMessage}</p>}
             <div className="space-y-3">
               {getCollegeOffers().length === 0 ? (
-                <p className="text-sm text-amber-700 dark:text-amber-300">Pick a college to advance. You can&apos;t go to the next week until you commit to a school. If no offers appear, refresh the page.</p>
+                <p className="text-sm text-amber-700 dark:text-amber-300">No offers yet. Request interest from schools below, or refresh the page to regenerate initial offers.</p>
               ) : (
                 getCollegeOffers().map((offer) => (
                   <div key={offer.id} className="rounded-lg bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-600 p-3">
                     <div className="font-medium text-slate-900 dark:text-white">{offer.schoolName}</div>
                     <div className="text-xs text-slate-500 dark:text-zinc-500 mt-1">
-                      {offer.division} · Tuition {offer.tuitionCoveredPct}% · NIL ${offer.nilAnnual}/yr · Housing ${offer.housingStipend} · Meals {offer.mealPlanPct}%
+                      {offer.division} · {fmtOfferType(offer.offerType)} · Tuition {offer.tuitionCoveredPct}% · NIL ${fmtNIL(offer.nilAnnual)}/yr · Housing ${offer.housingStipend} · Meals {offer.mealPlanPct}%
                       {offer.guaranteedStarter && ' · Guaranteed starter'}
                     </div>
                     <div className="flex flex-wrap gap-2 mt-2">
@@ -194,28 +382,127 @@ export function UnifiedGameLayout() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => { const r = negotiateOffer(offer.schoolId, { moreTuition: true }); setNegotiationFeedback({ schoolId: offer.schoolId, kind: 'tuition', success: r.success }); }}
+                        onClick={() => { const r = negotiateOffer(offer.schoolId, { moreTuition: true }); setNegotiationFeedback({ schoolId: offer.schoolId, kind: 'tuition', success: r.success, message: r.message }); }}
                         className={`rounded-lg px-3 py-2 text-sm touch-manipulation ${negotiationFeedback?.schoolId === offer.schoolId && negotiationFeedback?.kind === 'tuition' ? (negotiationFeedback.success ? 'bg-green-600 dark:bg-green-500 text-white' : 'bg-slate-400 dark:bg-zinc-500 text-slate-200 dark:text-zinc-300') : 'bg-slate-300 dark:bg-zinc-600 hover:bg-slate-400 dark:hover:bg-zinc-500'}`}
                       >
-                        {negotiationFeedback?.schoolId === offer.schoolId && negotiationFeedback?.kind === 'tuition' ? (negotiationFeedback.success ? 'Increased!' : 'No change') : 'Ask for more scholarship'}
+                        {negotiationFeedback?.schoolId === offer.schoolId && negotiationFeedback?.kind === 'tuition' ? (negotiationFeedback.success ? 'Increased!' : (negotiationFeedback.message ?? 'No change')) : 'Ask for more scholarship'}
                       </button>
                       <button
                         type="button"
-                        onClick={() => { const r = negotiateOffer(offer.schoolId, { moreNIL: true }); setNegotiationFeedback({ schoolId: offer.schoolId, kind: 'nil', success: r.success }); }}
+                        onClick={() => { const r = negotiateOffer(offer.schoolId, { moreNIL: true }); setNegotiationFeedback({ schoolId: offer.schoolId, kind: 'nil', success: r.success, message: r.message }); }}
                         className={`rounded-lg px-3 py-2 text-sm touch-manipulation ${negotiationFeedback?.schoolId === offer.schoolId && negotiationFeedback?.kind === 'nil' ? (negotiationFeedback.success ? 'bg-green-600 dark:bg-green-500 text-white' : 'bg-slate-400 dark:bg-zinc-500 text-slate-200 dark:text-zinc-300') : 'bg-slate-300 dark:bg-zinc-600 hover:bg-slate-400 dark:hover:bg-zinc-500'}`}
                       >
-                        {negotiationFeedback?.schoolId === offer.schoolId && negotiationFeedback?.kind === 'nil' ? (negotiationFeedback.success ? 'Increased!' : 'No change') : 'Ask for more NIL'}
+                        {negotiationFeedback?.schoolId === offer.schoolId && negotiationFeedback?.kind === 'nil' ? (negotiationFeedback.success ? 'Increased!' : (negotiationFeedback.message ?? 'No change')) : 'Ask for more NIL'}
                       </button>
                     </div>
                   </div>
                 ))
               )}
             </div>
+            <div className="mt-4 pt-4 border-t border-amber-300 dark:border-amber-600">
+              <h4 className="text-sm font-semibold text-amber-800 dark:text-amber-200 mb-2">Request interest from a school</h4>
+              <p className="text-xs text-slate-600 dark:text-zinc-400 mb-2">Schools you already have an offer from are not listed. Click Request to ask for an offer.</p>
+              <div className="flex flex-col gap-2 max-h-48 overflow-y-auto">
+                {['D1', 'D2', 'D3', 'NAIA', 'JUCO'].map((div) => {
+                  const schools = getSchools().filter((sc) => sc.division === div);
+                  const offeredIds = new Set(getCollegeOffers().map((o) => o.schoolId));
+                  const canRequest = schools.filter((sc) => !offeredIds.has(sc.id));
+                  if (canRequest.length === 0) return null;
+                  return (
+                    <div key={div} className="flex flex-wrap gap-1.5 items-center">
+                      <span className="text-xs font-medium text-slate-500 dark:text-zinc-500 w-10">{div}</span>
+                      {canRequest.map((sc) => (
+                        <button
+                          key={sc.id}
+                          type="button"
+                          onClick={() => { const r = requestCollegeOffer(sc.id); setRequestOfferMessage(r.message); }}
+                          className="rounded-lg bg-slate-200 dark:bg-zinc-700 px-2.5 py-1.5 text-xs font-medium text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-600 touch-manipulation"
+                        >
+                          {sc.name}
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
 
-        {view === 'play' && (
-          <>
+        {/* College graduation: choose Olympics, Restart, or Retire (only for college grads, not HS) */}
+        {state.pendingCollegeGraduation && isInCollege && (
+          <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border-2 border-emerald-500 dark:border-emerald-400 p-4">
+            <h3 className="text-emerald-800 dark:text-emerald-200 font-bold text-lg mb-1">You&apos;ve graduated college!</h3>
+            <p className="text-sm text-slate-600 dark:text-zinc-400 mb-4">Choose your path:</p>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => choosePostCollegeOption('olympics')}
+                className="rounded-lg bg-amber-500 dark:bg-amber-600 text-amber-950 dark:text-white px-4 py-3 font-semibold hover:bg-amber-600 dark:hover:bg-amber-500 touch-manipulation"
+              >
+                Wrestle the Olympics
+              </button>
+              <button
+                type="button"
+                onClick={() => { choosePostCollegeOption('restart'); goToCreate(); }}
+                className="rounded-lg bg-blue-600 dark:bg-blue-500 text-white px-4 py-3 font-semibold hover:bg-blue-500 dark:hover:bg-blue-400 touch-manipulation"
+              >
+                Start a new career
+              </button>
+              <button
+                type="button"
+                onClick={() => choosePostCollegeOption('retire')}
+                className="rounded-lg bg-slate-500 dark:bg-zinc-600 text-white px-4 py-3 font-semibold hover:bg-slate-600 dark:hover:bg-zinc-500 touch-manipulation"
+              >
+                Retire
+              </button>
+            </div>
+          </div>
+        )}
+
+        {state.careerEnded && (
+          <div className="rounded-lg bg-slate-100 dark:bg-zinc-800 border-2 border-slate-400 dark:border-zinc-600 p-4">
+            <h3 className="text-slate-800 dark:text-zinc-200 font-bold text-lg mb-2">
+              {state.careerEndChoice === 'olympics' ? 'Olympics bound' : 'Career over'}
+            </h3>
+            <p className="text-slate-700 dark:text-zinc-300 whitespace-pre-wrap mb-4">{state.story}</p>
+            <button type="button" onClick={goToCreate} className="rounded-lg bg-blue-600 dark:bg-blue-500 text-white px-4 py-2.5 font-semibold hover:bg-blue-500 dark:hover:bg-blue-400 touch-manipulation">
+              Start new career
+            </button>
+          </div>
+        )}
+
+{view === 'play' && (
+            <>
+            {(() => {
+              const pendingTournament = getPendingTournamentPlay();
+              if (pendingTournament) {
+                const label = pendingTournament.phaseLabel ?? (pendingTournament.offseasonEventKey ? pendingTournament.offseasonEventKey.replace(/_/g, ' ') : 'Tournament');
+                return (
+                  <div className="rounded-lg bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-500 dark:border-amber-500 p-4 mb-4">
+                    <h3 className="text-amber-800 dark:text-amber-200 font-semibold text-lg mb-2">Go to tournament</h3>
+                    <p className="text-sm text-amber-700 dark:text-amber-300 mb-3">{label} — play the bracket or simulate all matches.</p>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => startTournamentPlay()}
+                        className="rounded-lg bg-blue-600 dark:bg-blue-500 text-white px-4 py-2.5 font-semibold hover:bg-blue-500 dark:hover:bg-blue-400 touch-manipulation"
+                      >
+                        Play bracket
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => simulateTournamentBracket()}
+                        className="rounded-lg bg-slate-300 dark:bg-zinc-600 text-slate-800 dark:text-zinc-200 px-4 py-2.5 font-semibold hover:bg-slate-400 dark:hover:bg-zinc-500 touch-manipulation"
+                      >
+                        Simulate bracket
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+              return null;
+            })()}
             {(() => {
               const next = engine.getNextEvent();
               return next ? (
@@ -229,6 +516,12 @@ export function UnifiedGameLayout() {
             <div className="rounded-lg bg-slate-100 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 p-4">
               <p className="text-slate-700 dark:text-zinc-300 whitespace-pre-wrap">{state.story}</p>
             </div>
+            {!engine.getCanWrestle() && (
+              <div className="rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-400 dark:border-amber-500 p-3">
+                <p className="text-sm text-amber-800 dark:text-amber-200 font-medium">Academic ineligibility</p>
+                <p className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">Grades are below {UnifiedEngine.getMinGradesToWrestle()}. Study to raise your grades — you can&apos;t compete until then.</p>
+              </div>
+            )}
 
             {state.lastWeekSummary && (
               <div className="rounded-lg bg-blue-50 dark:bg-blue-950/50 border border-blue-600/60 dark:border-blue-500/60 p-4">
@@ -236,11 +529,119 @@ export function UnifiedGameLayout() {
                 {state.lastWeekSummary.eventType && (
                   <p className="text-xs text-zinc-400 mb-2">{state.lastWeekSummary.eventType === 'dual' ? 'Dual meet' : state.lastWeekSummary.eventType === 'tournament' ? 'Tournament' : state.lastWeekSummary.eventType}</p>
                 )}
-                {state.lastWeekSummary.matches && state.lastWeekSummary.matches.length > 0 && (
+                {(state.lastWeekSummary.eventType === 'tournament' ||
+                  state.lastWeekSummary.eventType === 'district' ||
+                  state.lastWeekSummary.eventType === 'state') &&
+                  state.lastWeekSummary.bracketParticipants &&
+                  state.lastWeekSummary.bracketParticipants.length >= 8 && (
+                  <div className="mb-3 p-2 rounded bg-slate-200/80 dark:bg-zinc-700/80">
+                    {(() => {
+                      const seeds = [...state.lastWeekSummary.bracketParticipants].sort((a, b) => a.seed - b.seed);
+                      const is16 = seeds.length >= 16;
+                      const label = is16 ? 'Bracket (16-man)' : 'Bracket (8-man)';
+                      if (is16 && seeds.length >= 16) {
+                        const r16 = [
+                          [seeds[0], seeds[15]],
+                          [seeds[7], seeds[8]],
+                          [seeds[3], seeds[12]],
+                          [seeds[4], seeds[11]],
+                          [seeds[1], seeds[14]],
+                          [seeds[6], seeds[9]],
+                          [seeds[2], seeds[13]],
+                          [seeds[5], seeds[10]],
+                        ];
+                        return (
+                          <>
+                            <p className="text-xs font-medium text-slate-600 dark:text-zinc-300 mb-1.5">{label}</p>
+                            <ul className="text-xs sm:text-sm text-slate-700 dark:text-zinc-200 space-y-0.5">
+                              <li className="font-semibold text-slate-600 dark:text-zinc-300">R16</li>
+                              {r16.map(([a, b], idx) => (
+                                <li key={idx}>
+                                  {a.seed}. {a.name} ({Math.round(a.overallRating)}) vs {b.seed}. {b.name} ({Math.round(b.overallRating)})
+                                </li>
+                              ))}
+                            </ul>
+                          </>
+                        );
+                      }
+                      if (seeds.length >= 8) {
+                        const qfs = [
+                          [seeds[0], seeds[7]],
+                          [seeds[3], seeds[4]],
+                          [seeds[1], seeds[6]],
+                          [seeds[2], seeds[5]],
+                        ];
+                        return (
+                          <>
+                            <p className="text-xs font-medium text-slate-600 dark:text-zinc-300 mb-1.5">{label}</p>
+                            <ul className="text-xs sm:text-sm text-slate-700 dark:text-zinc-200 space-y-0.5">
+                              <li className="font-semibold text-slate-600 dark:text-zinc-300">Quarterfinals</li>
+                              {qfs.map(([a, b], idx) => (
+                                <li key={idx}>
+                                  {a.seed}. {a.name} ({Math.round(a.overallRating)}) vs {b.seed}. {b.name} ({Math.round(b.overallRating)})
+                                </li>
+                              ))}
+                            </ul>
+                          </>
+                        );
+                      }
+                      return <p className="text-xs font-medium text-slate-600 dark:text-zinc-300 mb-1.5">{label}</p>;
+                    })()}
+                  </div>
+                )}
+                {(state.lastWeekSummary.eventType === 'tournament' ||
+                  state.lastWeekSummary.eventType === 'district' ||
+                  state.lastWeekSummary.eventType === 'state') &&
+                  state.lastWeekSummary.matches &&
+                  state.lastWeekSummary.matches.length > 0 && (
+                  <div className="mb-2">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <p className="text-xs text-slate-600 dark:text-zinc-300">
+                        Tournament mini-game: {tournamentRevealCount === 0
+                          ? 'Click to wrestle your first match.'
+                          : `Matches shown: ${tournamentRevealCount}/${state.lastWeekSummary && state.lastWeekSummary.matches ? state.lastWeekSummary.matches.length : 0}`}
+                      </p>
+                      {state.lastWeekSummary &&
+                        state.lastWeekSummary.matches &&
+                        tournamentRevealCount < state.lastWeekSummary.matches.length && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setTournamentRevealCount((c) =>
+                              state.lastWeekSummary && state.lastWeekSummary.matches
+                                ? Math.min(c + 1, state.lastWeekSummary.matches.length)
+                                : c
+                            )
+                          }
+                          className="ml-2 rounded bg-blue-600 text-white text-xs px-2 py-1 hover:bg-blue-700 active:bg-blue-800"
+                        >
+                          {tournamentRevealCount === 0 ? 'Go to tournament' : 'Wrestle next match'}
+                        </button>
+                      )}
+                    </div>
+                    {tournamentRevealCount > 0 && (
+                      <ul className="text-sm text-slate-600 dark:text-zinc-300 space-y-1">
+                        {state.lastWeekSummary.matches.slice(0, tournamentRevealCount).map((m, i) => (
+                          <li key={i}>
+                            {m.won ? 'W' : 'L'} vs {m.opponentName} ({Math.round(m.opponentOverall)})
+                            {m.stateRank != null && ` #${m.stateRank} state`}
+                            {m.nationalRank != null && ` #${m.nationalRank} nat'l`}
+                            {m.method && ` — ${m.method}`}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+                {!(state.lastWeekSummary.eventType === 'tournament' ||
+                  state.lastWeekSummary.eventType === 'district' ||
+                  state.lastWeekSummary.eventType === 'state') &&
+                  state.lastWeekSummary.matches &&
+                  state.lastWeekSummary.matches.length > 0 && (
                   <ul className="text-sm text-slate-600 dark:text-zinc-300 space-y-1 mb-2">
                     {state.lastWeekSummary.matches.map((m, i) => (
                       <li key={i}>
-                        {m.won ? 'W' : 'L'} vs {m.opponentName} ({m.opponentOverall})
+                        {m.won ? 'W' : 'L'} vs {m.opponentName} ({Math.round(m.opponentOverall)})
                         {m.stateRank != null && ` #${m.stateRank} state`}
                         {m.nationalRank != null && ` #${m.nationalRank} nat'l`}
                         {m.method && ` — ${m.method}`}
@@ -264,7 +665,10 @@ export function UnifiedGameLayout() {
                 </ul>
                 {state.lastWeekEconomy && (
                   <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-2">
-                    Finances: +${state.lastWeekEconomy.income.total} income, −${state.lastWeekEconomy.expenses.total} expenses
+                    Finances: +${state.lastWeekEconomy.income.total} income
+                    {state.lastWeekEconomy.income.nil != null && state.lastWeekEconomy.income.nil > 0 ? ` (NIL $${state.lastWeekEconomy.income.nil})` : ''}
+                    {state.lastWeekEconomy.income.partTime != null && state.lastWeekEconomy.income.partTime > 0 ? ` (part-time $${state.lastWeekEconomy.income.partTime})` : ''}
+                    , −${state.lastWeekEconomy.expenses.total} expenses
                     {state.lastWeekEconomy.expenses.lifestyle != null && state.lastWeekEconomy.expenses.lifestyle > 0 ? ` ($${state.lastWeekEconomy.expenses.lifestyle} lifestyle)` : ''}
                     → Balance ${state.lastWeekEconomy.balance}
                   </p>
@@ -290,6 +694,33 @@ export function UnifiedGameLayout() {
               );
             })()}
 
+            {lastOffseasonBracket && lastOffseasonBracket.participants.length >= 8 && (
+              <div className="rounded-lg bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 p-4">
+                <h3 className="text-blue-600 dark:text-blue-400 font-semibold mb-2">Bracket: {lastOffseasonBracket.name}</h3>
+                {(() => {
+                  const seeds = [...lastOffseasonBracket.participants].sort((a, b) => a.seed - b.seed);
+                  if (seeds.length < 8) return null;
+                  const qfs = [
+                    [seeds[0], seeds[7]],
+                    [seeds[3], seeds[4]],
+                    [seeds[1], seeds[6]],
+                    [seeds[2], seeds[5]],
+                  ];
+                  return (
+                    <ul className="text-xs sm:text-sm text-slate-700 dark:text-zinc-200 space-y-0.5">
+                      <li className="font-semibold text-slate-600 dark:text-zinc-300">Quarterfinals</li>
+                      {qfs.map(([a, b], idx) => (
+                        <li key={idx}>
+                          {a.seed}. {a.name} ({Math.round(a.overallRating)}) vs {b.seed}. {b.name} ({Math.round(b.overallRating)})
+                        </li>
+                      ))}
+                    </ul>
+                  );
+                })()}
+                <button type="button" onClick={() => setLastOffseasonBracket(null)} className="text-xs text-slate-500 dark:text-zinc-400 mt-2 hover:underline">Dismiss</button>
+              </div>
+            )}
+
             {(offseasonEvents.length > 0 || (state.week === 27 || state.week === 28 || state.week === 36 || state.week === 37) || (isInCollege && (state.week === 18 || state.week === 22))) && (
               <div className="rounded-lg bg-slate-100 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 p-4">
                 <h3 className="text-blue-600 dark:text-blue-400 font-semibold mb-2">{isInCollege ? 'College offseason' : 'Offseason events'}</h3>
@@ -300,9 +731,10 @@ export function UnifiedGameLayout() {
                       key={ev.key}
                       type="button"
                       onClick={() => {
-                        const result = runOffseasonEvent(ev.key);
-                        if (result.success && result.matches?.length) {
+                        const result = runOffseasonEvent(ev.key) as { success: boolean; eventName?: string; message?: string };
+                        if (result.success) {
                           setView('play');
+                          setLastOffseasonBracket(null);
                         }
                       }}
                       disabled={!ev.canAfford}
@@ -381,14 +813,40 @@ export function UnifiedGameLayout() {
               )}
             </div>
 
-            <button
-              type="button"
-              onClick={() => advanceWeek()}
-              disabled={!getCanAdvanceWeek()}
-              className="w-full sm:w-auto rounded-lg bg-blue-600 dark:bg-blue-500 py-4 sm:py-3 px-6 min-h-[52px] font-semibold text-white hover:bg-blue-500 dark:hover:bg-blue-400 active:bg-blue-700 dark:active:bg-blue-600 disabled:opacity-50 disabled:pointer-events-none touch-manipulation"
-            >
-              {getCanAdvanceWeek() ? 'Next week →' : state.transferPortalActive ? 'Resolve transfer in College tab to advance' : 'Pick a college above to advance'}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm text-slate-600 dark:text-zinc-400">Advance:</span>
+              {([1, 3, 5] as const).map((w) => (
+                <button
+                  key={w}
+                  type="button"
+                  onClick={() => (w === 1 ? advanceWeek() : advanceWeeks(w))}
+                  disabled={!getCanAdvanceWeek()}
+                  className="rounded-lg bg-blue-600 dark:bg-blue-500 py-3 px-4 min-h-[44px] font-semibold text-white hover:bg-blue-500 dark:hover:bg-blue-400 active:bg-blue-700 dark:active:bg-blue-600 disabled:opacity-50 disabled:pointer-events-none touch-manipulation"
+                >
+                  {w} week{w !== 1 ? 's' : ''} →
+                </button>
+              ))}
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer select-none mt-2">
+              <input
+                type="checkbox"
+                checked={autoTrainOnAdvance}
+                onChange={(e) => setAutoTrainOnAdvance(e.target.checked)}
+                className="rounded border-slate-300 dark:border-zinc-500 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="text-sm text-slate-700 dark:text-zinc-300">Auto-train when advancing (trains what you need most; single week always trains if you have time & energy)</span>
+            </label>
+            {!getCanAdvanceWeek() && (
+              <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">
+                {state.pendingCompetition
+                  ? 'Finish your current match before advancing.'
+                  : state.pendingTournamentPlay
+                  ? 'Go to tournament and play or simulate to advance.'
+                  : state.transferPortalActive
+                  ? 'Resolve transfer in College tab to advance.'
+                  : 'Pick a college above to advance.'}
+              </p>
+            )}
           </>
         )}
 
@@ -444,9 +902,10 @@ export function UnifiedGameLayout() {
                 {state.transferPortalActive ? (
                   <div className="space-y-4">
                     <h4 className="text-amber-700 dark:text-amber-300 font-semibold">Transfer portal</h4>
-                    <p className="text-sm text-slate-600 dark:text-zinc-400">You&apos;re in the portal. Pick a school to transfer to or withdraw to stay.</p>
+                    <p className="text-sm text-slate-600 dark:text-zinc-400">Request interest from schools; they may or may not offer. Pick a school to transfer to or withdraw to stay.</p>
+                    {requestTransferMessage && <p className="text-sm text-slate-600 dark:text-zinc-400">{requestTransferMessage}</p>}
                     {getTransferOffers().length === 0 ? (
-                      <p className="text-sm text-amber-600 dark:text-amber-400">No offers yet. Withdraw to stay at {state.collegeName}.</p>
+                      <p className="text-sm text-amber-600 dark:text-amber-400">No offers yet. Request interest from schools below.</p>
                     ) : (
                       <ul className="space-y-3">
                         {getTransferOffers().map((offer) => (
@@ -456,30 +915,58 @@ export function UnifiedGameLayout() {
                               <span className="text-xs text-slate-500 dark:text-zinc-400">{offer.division}</span>
                             </div>
                             <div className="text-xs text-slate-600 dark:text-zinc-400 mb-2">
-                              Tuition {offer.tuitionCoveredPct}% · NIL ${offer.nilAnnual}/yr · Housing ${offer.housingStipend} · Meals {offer.mealPlanPct}%
+                              {fmtOfferType(offer.offerType)} · Tuition {offer.tuitionCoveredPct}% · NIL ${fmtNIL(offer.nilAnnual)}/yr · Housing {offer.housingStipend} · Meals {offer.mealPlanPct}%
                               {offer.guaranteedStarter && ' · Guaranteed starter'}
                             </div>
                             <div className="flex flex-wrap gap-2">
                               <button type="button" onClick={() => acceptTransfer(offer.schoolId)} className="rounded-lg bg-green-600 dark:bg-green-500 text-white px-3 py-1.5 text-sm font-medium min-h-[44px] touch-manipulation">Accept — transfer here</button>
                               <button
                                 type="button"
-                                onClick={() => { const r = negotiateTransferOffer(offer.schoolId, { moreTuition: true }); setNegotiationFeedback({ schoolId: offer.schoolId, kind: 'tuition', success: r.success }); }}
+                                onClick={() => { const r = negotiateTransferOffer(offer.schoolId, { moreTuition: true }); setNegotiationFeedback({ schoolId: offer.schoolId, kind: 'tuition', success: r.success, message: r.message }); }}
                                 className={`rounded-lg px-3 py-1.5 text-sm font-medium min-h-[44px] touch-manipulation ${negotiationFeedback?.schoolId === offer.schoolId && negotiationFeedback?.kind === 'tuition' ? (negotiationFeedback.success ? 'bg-green-600 dark:bg-green-500 text-white' : 'bg-slate-400 dark:bg-zinc-500 text-slate-200 dark:text-zinc-300') : 'bg-slate-300 dark:bg-zinc-600 hover:bg-slate-400 dark:hover:bg-zinc-500'}`}
                               >
-                                {negotiationFeedback?.schoolId === offer.schoolId && negotiationFeedback?.kind === 'tuition' ? (negotiationFeedback.success ? 'Increased!' : 'No change') : 'Negotiate: more scholarship'}
+                                {negotiationFeedback?.schoolId === offer.schoolId && negotiationFeedback?.kind === 'tuition' ? (negotiationFeedback.success ? 'Increased!' : negotiationFeedback.message) : 'Negotiate: more scholarship'}
                               </button>
                               <button
                                 type="button"
-                                onClick={() => { const r = negotiateTransferOffer(offer.schoolId, { moreNIL: true }); setNegotiationFeedback({ schoolId: offer.schoolId, kind: 'nil', success: r.success }); }}
+                                onClick={() => { const r = negotiateTransferOffer(offer.schoolId, { moreNIL: true }); setNegotiationFeedback({ schoolId: offer.schoolId, kind: 'nil', success: r.success, message: r.message }); }}
                                 className={`rounded-lg px-3 py-1.5 text-sm font-medium min-h-[44px] touch-manipulation ${negotiationFeedback?.schoolId === offer.schoolId && negotiationFeedback?.kind === 'nil' ? (negotiationFeedback.success ? 'bg-green-600 dark:bg-green-500 text-white' : 'bg-slate-400 dark:bg-zinc-500 text-slate-200 dark:text-zinc-300') : 'bg-slate-300 dark:bg-zinc-600 hover:bg-slate-400 dark:hover:bg-zinc-500'}`}
                               >
-                                {negotiationFeedback?.schoolId === offer.schoolId && negotiationFeedback?.kind === 'nil' ? (negotiationFeedback.success ? 'Increased!' : 'No change') : 'Negotiate: more NIL'}
+                                {negotiationFeedback?.schoolId === offer.schoolId && negotiationFeedback?.kind === 'nil' ? (negotiationFeedback.success ? 'Increased!' : negotiationFeedback.message) : 'Negotiate: more NIL'}
                               </button>
                             </div>
                           </li>
                         ))}
                       </ul>
                     )}
+                    <div className="pt-4 border-t border-amber-300 dark:border-amber-600">
+                      <h5 className="text-sm font-semibold text-amber-800 dark:text-amber-200 mb-2">Request interest from a school</h5>
+                      <p className="text-xs text-slate-600 dark:text-zinc-400 mb-2">Click a school to request a transfer offer. They may accept or pass.</p>
+                      <div className="flex flex-col gap-2 max-h-48 overflow-y-auto">
+                        {['D1', 'D2', 'D3', 'NAIA', 'JUCO'].map((div) => {
+                          const currentName = (state.collegeName ?? '').toLowerCase();
+                          const schools = getSchools().filter((sc) => sc.division === div && sc.name.toLowerCase() !== currentName);
+                          const offeredIds = new Set(getTransferOffers().map((o) => o.schoolId));
+                          const canRequest = schools.filter((sc) => !offeredIds.has(sc.id));
+                          if (canRequest.length === 0) return null;
+                          return (
+                            <div key={div} className="flex flex-wrap gap-1.5 items-center">
+                              <span className="text-xs font-medium text-slate-500 dark:text-zinc-500 w-10">{div}</span>
+                              {canRequest.map((sc) => (
+                                <button
+                                  key={sc.id}
+                                  type="button"
+                                  onClick={() => { const r = requestTransferOffer(sc.id); setRequestTransferMessage(r.message); }}
+                                  className="rounded-lg bg-slate-200 dark:bg-zinc-700 px-2.5 py-1.5 text-xs font-medium text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-600 touch-manipulation"
+                                >
+                                  {sc.name}
+                                </button>
+                              ))}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                     <button type="button" onClick={() => withdrawFromTransferPortal()} className="rounded-lg bg-slate-400 dark:bg-zinc-600 text-white px-3 py-2 text-sm font-medium min-h-[44px] touch-manipulation">Withdraw from portal</button>
                   </div>
                 ) : (
@@ -501,16 +988,17 @@ export function UnifiedGameLayout() {
               </>
             ) : state.pendingCollegeChoice ? (
               <>
-                <p className="text-slate-700 dark:text-zinc-300 mb-4">You&apos;ve graduated. Everyone gets offers from D1 down to JUCO based on your recruiting. Pick a school and click <strong>Accept</strong> to commit — that&apos;s how you advance. You can negotiate scholarship or NIL first.</p>
+                <p className="text-slate-700 dark:text-zinc-300 mb-4">You&apos;ve graduated. You have offers from some schools; you can also <strong>request interest</strong> from any school below. Pick a school and click <strong>Accept</strong> to commit — negotiate scholarship or NIL first if you want.</p>
+                {requestOfferMessage && <p className="text-sm mb-2 text-slate-600 dark:text-zinc-400">{requestOfferMessage}</p>}
                 {getCollegeOffers().length === 0 ? (
-                  <p className="text-amber-700 dark:text-amber-300">Pick a college to advance. You can&apos;t go to the next week until you commit. If no offers appear, refresh the page.</p>
+                  <p className="text-amber-700 dark:text-amber-300">No offers yet. Request interest from schools below.</p>
                 ) : (
                   <div className="space-y-4">
                     {getCollegeOffers().map((offer) => (
                       <div key={offer.id} className="rounded-lg bg-white dark:bg-zinc-800 border-2 border-slate-200 dark:border-zinc-600 p-4">
                         <div className="font-semibold text-lg text-slate-900 dark:text-white mb-1">{offer.schoolName}</div>
                         <div className="text-sm text-slate-500 dark:text-zinc-500 mb-3">
-                          {offer.division} · Tuition covered {offer.tuitionCoveredPct}% · NIL ${offer.nilAnnual}/yr · Housing ${offer.housingStipend} · Meals {offer.mealPlanPct}%
+                          {offer.division} · {fmtOfferType(offer.offerType)} · Tuition covered {offer.tuitionCoveredPct}% · NIL ${fmtNIL(offer.nilAnnual)}/yr · Housing ${offer.housingStipend} · Meals {offer.mealPlanPct}%
                           {offer.guaranteedStarter && ' · Guaranteed starter'}
                         </div>
                         <div className="flex flex-wrap gap-2">
@@ -523,14 +1011,14 @@ export function UnifiedGameLayout() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => { const r = negotiateOffer(offer.schoolId, { moreTuition: true }); setNegotiationFeedback({ schoolId: offer.schoolId, kind: 'tuition', success: r.success }); }}
+                            onClick={() => { const r = negotiateOffer(offer.schoolId, { moreTuition: true }); setNegotiationFeedback({ schoolId: offer.schoolId, kind: 'tuition', success: r.success, message: r.message }); }}
                             className={`rounded-lg px-4 py-2.5 text-sm font-medium touch-manipulation ${negotiationFeedback?.schoolId === offer.schoolId && negotiationFeedback?.kind === 'tuition' ? (negotiationFeedback.success ? 'bg-green-600 dark:bg-green-500 text-white' : 'bg-slate-400 dark:bg-zinc-500 text-slate-200 dark:text-zinc-300') : 'bg-amber-500 dark:bg-amber-600 text-white hover:bg-amber-600 dark:hover:bg-amber-500'}`}
                           >
                             {negotiationFeedback?.schoolId === offer.schoolId && negotiationFeedback?.kind === 'tuition' ? (negotiationFeedback.success ? 'Increased!' : 'No change') : 'Negotiate: more scholarship'}
                           </button>
                           <button
                             type="button"
-                            onClick={() => { const r = negotiateOffer(offer.schoolId, { moreNIL: true }); setNegotiationFeedback({ schoolId: offer.schoolId, kind: 'nil', success: r.success }); }}
+                            onClick={() => { const r = negotiateOffer(offer.schoolId, { moreNIL: true }); setNegotiationFeedback({ schoolId: offer.schoolId, kind: 'nil', success: r.success, message: r.message }); }}
                             className={`rounded-lg px-4 py-2.5 text-sm font-medium touch-manipulation ${negotiationFeedback?.schoolId === offer.schoolId && negotiationFeedback?.kind === 'nil' ? (negotiationFeedback.success ? 'bg-green-600 dark:bg-green-500 text-white' : 'bg-slate-400 dark:bg-zinc-500 text-slate-200 dark:text-zinc-300') : 'bg-amber-500 dark:bg-amber-600 text-white hover:bg-amber-600 dark:hover:bg-amber-500'}`}
                           >
                             {negotiationFeedback?.schoolId === offer.schoolId && negotiationFeedback?.kind === 'nil' ? (negotiationFeedback.success ? 'Increased!' : 'No change') : 'Negotiate: more NIL'}
@@ -540,11 +1028,42 @@ export function UnifiedGameLayout() {
                     ))}
                   </div>
                 )}
+                {state.pendingCollegeChoice && (
+                  <div className="mt-6 pt-4 border-t border-slate-200 dark:border-zinc-600">
+                    <h4 className="text-sm font-semibold text-slate-700 dark:text-zinc-300 mb-2">Request interest from a school</h4>
+                    <p className="text-xs text-slate-500 dark:text-zinc-500 mb-3">Click a school to request an offer. They may accept or pass.</p>
+                    <div className="flex flex-col gap-3 max-h-64 overflow-y-auto">
+                      {['D1', 'D2', 'D3', 'NAIA', 'JUCO'].map((div) => {
+                        const schools = getSchools().filter((sc) => sc.division === div);
+                        const offeredIds = new Set(getCollegeOffers().map((o) => o.schoolId));
+                        const canRequest = schools.filter((sc) => !offeredIds.has(sc.id));
+                        if (canRequest.length === 0) return null;
+                        return (
+                          <div key={div}>
+                            <span className="text-xs font-medium text-slate-500 dark:text-zinc-500">{div}</span>
+                            <div className="flex flex-wrap gap-1.5 mt-1">
+                              {canRequest.map((sc) => (
+                                <button
+                                  key={sc.id}
+                                  type="button"
+                                  onClick={() => { const r = requestCollegeOffer(sc.id); setRequestOfferMessage(r.message); }}
+                                  className="rounded-lg bg-slate-200 dark:bg-zinc-700 px-3 py-2 text-sm font-medium text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-600 touch-manipulation"
+                                >
+                                  {sc.name}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </>
             ) : (
               <div>
                 <p className="text-slate-600 dark:text-zinc-400">
-                  You&apos;re in high school. When you graduate (age 18), you&apos;ll get college offers and pick your school here. You can negotiate scholarship and NIL before committing.
+                  You&apos;re in high school. When you graduate (age 18), you&apos;ll get college offers and can request interest from any school. You can negotiate scholarship and NIL before committing.
                 </p>
                 <p className="text-sm text-slate-500 dark:text-zinc-500 mt-2">Recruiting score: <strong>{state.recruitingScore}</strong> — improve with grades, wins, and placements.</p>
               </div>
@@ -724,7 +1243,7 @@ export function UnifiedGameLayout() {
             <div className="grid grid-cols-7 gap-1.5 max-w-4xl mb-2 min-w-[280px]">
               {Array.from({ length: 52 }, (_, i) => i + 1).map((w) => {
                 const isCurrent = w === (state.week ?? 1);
-                const phase = isInCollege ? (w <= 7 ? 'Season' : w === 8 ? 'Conference' : w === 12 ? 'NCAA' : '') : engine.getHSPhaseForWeek(w);
+                const phase = isInCollege ? (w === 15 ? 'NCAA' : w <= 14 ? 'Season' : '') : engine.getHSPhaseForWeek(w);
                 const entry = isInCollege ? engine.getCollegeScheduleEntry(w) : engine.getHSScheduleEntry(w);
                 const displayLabel = engine.getScheduleDisplayLabel(w);
                 const title = entry?.type === 'dual' ? `Week ${w}: Dual vs ${(entry as { opponentName?: string }).opponentName}` : entry?.type === 'tournament' ? `Week ${w}: ${(entry as { tournamentName?: string }).tournamentName ?? 'Tournament'}` : entry?.type === 'rival' ? `Week ${w}: Rival` : displayLabel ? `Week ${w}: ${displayLabel}` : `Week ${w}: ${phase}`;
@@ -747,7 +1266,7 @@ export function UnifiedGameLayout() {
             </div>
             </div>
             <p className="text-xs text-slate-500 dark:text-zinc-500">
-              {isInCollege ? 'Duals and tournaments show opponent/tournament name. Weeks 1–7 regular, 8 Conference, 12 NCAA.' : 'Duals and tournaments show opponent or event name. Weeks 9–20 Offseason, 21–30 Summer (Fargo 27–28), 31–38 Preseason, 39–49 Regular, 50 Districts, 51 State, 52 Wrap.'}
+              {isInCollege ? 'Weeks 1–14: early season (opens + duals), midseason (duals + invites), conference stretch, Conf Champs (12), recovery; Week 15 NCAA. Travel duals = 2 matches; opens may rest starters.' : 'Duals and tournaments show opponent or event name. Weeks 9–20 Offseason, 21–30 Summer (Fargo 27–28), 31–38 Preseason, 39–49 Regular, 50 Districts, 51 State, 52 Wrap.'}
             </p>
           </div>
         )}
@@ -804,6 +1323,56 @@ export function UnifiedGameLayout() {
               })}
             </div>
             <p className="text-xs text-slate-500 dark:text-zinc-500 mt-4">Housing and meal plan charge weekly. Car and recovery equipment are one-time purchases. Last week&apos;s expenses (including lifestyle) appear in the week summary after you advance.</p>
+
+            <h4 className="text-sm font-semibold text-slate-700 dark:text-zinc-300 mt-6 mb-2">Custom purchases</h4>
+            <p className="text-xs text-slate-500 dark:text-zinc-500 mb-3">One-time buys: gear, recovery, and luxuries. Some are expensive.</p>
+            <div className="space-y-2 max-h-[50vh] overflow-y-auto">
+              {engine.getCustomLifestyleCatalog().map((item) => (
+                <div key={item.id} className={`rounded-lg border p-3 ${item.owned ? 'border-green-400 dark:border-green-600 bg-green-50/50 dark:bg-green-950/20' : 'border-slate-200 dark:border-zinc-600 bg-white dark:bg-zinc-800/50'}`}>
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <div className="font-medium text-slate-800 dark:text-zinc-200">{item.name}</div>
+                      <div className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">{item.description}</div>
+                      {!item.owned && <div className="text-xs text-slate-600 dark:text-zinc-300 mt-1">{item.effectSummary}</div>}
+                    </div>
+                    {item.owned ? (
+                      <span className="text-xs font-medium text-green-600 dark:text-green-400">Owned</span>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`text-sm font-semibold ${item.cost >= 2000 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-700 dark:text-zinc-300'}`}>${item.cost}</span>
+                        {item.weeklyCost != null && item.weeklyCost > 0 && <span className="text-xs text-slate-500">+${item.weeklyCost}/wk</span>}
+                        <button
+                          type="button"
+                          onClick={() => { const r = purchaseCustomItem(item.id); if (!r.success) alert(r.message); }}
+                          className="rounded-lg bg-blue-600 dark:bg-blue-500 text-white px-3 py-1.5 text-sm font-medium min-h-[36px] touch-manipulation disabled:opacity-50"
+                          disabled={!item.canAfford}
+                        >
+                          Buy
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {view === 'life' && (
+          <div className="rounded-lg bg-slate-100 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 p-4 max-w-lg">
+            <h3 className="text-blue-600 dark:text-blue-400 font-semibold text-lg mb-1">Life log</h3>
+            <p className="text-sm text-slate-600 dark:text-zinc-400 mb-4">Popup events and the choices you made. New events appear each week when you advance.</p>
+            {lifeLog.length === 0 ? (
+              <p className="text-slate-500 dark:text-zinc-500 text-sm">No life events logged yet. Advance a week to see popups and your choices here.</p>
+            ) : (
+              <ul className="space-y-2 max-h-[60vh] overflow-y-auto">
+                {lifeLog.map((entry, i) => (
+                  <li key={i} className="text-sm text-slate-700 dark:text-zinc-300 border-l-2 border-slate-300 dark:border-zinc-600 pl-3 py-1">
+                    {entry.text}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
 
@@ -844,9 +1413,26 @@ export function UnifiedGameLayout() {
             <h3 className="text-blue-600 dark:text-blue-400 font-semibold text-lg">Settings</h3>
 
             <section>
+              <h4 className="text-sm font-medium text-slate-600 dark:text-zinc-300 mb-2">Weight class</h4>
+              <p className="text-xs text-slate-500 dark:text-zinc-500 mb-2">Switch to a different weight for your current level (HS or college).</p>
+              <select
+                value={state.weightClass ?? 145}
+                onChange={(e) => setWeightClass(Number(e.target.value))}
+                className="rounded-lg border border-slate-300 dark:border-zinc-500 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-200 px-3 py-2 text-sm min-h-[44px] touch-manipulation"
+              >
+                {UnifiedEngine.getWeightClasses(state.league).map((wc) => (
+                  <option key={wc} value={wc}>{wc} lbs</option>
+                ))}
+              </select>
+            </section>
+
+            <section>
               <h4 className="text-sm font-medium text-slate-600 dark:text-zinc-300 mb-2">Game</h4>
               <div className="space-y-2 text-sm text-slate-600 dark:text-zinc-400">
-                <p>Save data is stored in this browser. Use &quot;New game&quot; to start over.</p>
+                <p>Save data is stored in this browser. Start a new game to reset your career.</p>
+                <button type="button" onClick={goToCreate} className="rounded-lg bg-slate-300 dark:bg-zinc-700 px-4 py-2.5 text-sm font-medium text-slate-700 dark:text-zinc-300 active:bg-slate-400 dark:active:bg-zinc-600 touch-manipulation mt-2">
+                  New game
+                </button>
               </div>
             </section>
 
@@ -859,7 +1445,7 @@ export function UnifiedGameLayout() {
                 <div className="mt-3 space-y-2 text-sm text-slate-600 dark:text-zinc-400">
                   <p className="font-medium text-slate-700 dark:text-zinc-300">Basics</p>
                   <ul className="list-disc list-inside space-y-1 pl-1">
-                    <li>Spend <strong>hours</strong> each week on Train, Study, Compete, Rest, or Relationships. Hours reset every week.</li>
+                    <li>Spend <strong>hours</strong> each week on Train, Study, Rest, or Relationships. Hours reset every week.</li>
                     <li>Keep <strong>grades</strong> up for college options; <strong>conditioning</strong> affects match performance and decays if you don&apos;t train.</li>
                     <li>Rest and Rehab don&apos;t reduce conditioning; only skipping training does.</li>
                   </ul>
@@ -890,7 +1476,7 @@ export function UnifiedGameLayout() {
         )}
       </main>
 
-      {/* Desktop top-right bar (mobile uses header) */}
+      {/* Desktop top-right bar (Hours, Energy, $ — New game is in Settings) */}
       <div className="hidden md:flex absolute top-4 right-4 items-center gap-3">
         <span className="text-xs text-zinc-400">
           <span className="text-blue-600 dark:text-blue-400 font-medium">Hours:</span> {state.hoursLeftThisWeek ?? 40}
@@ -901,9 +1487,6 @@ export function UnifiedGameLayout() {
         <span className="text-xs text-slate-600 dark:text-zinc-400">
           <span className="text-blue-600 dark:text-blue-400 font-medium">$</span>{state.money}
         </span>
-        <button type="button" onClick={goToCreate} className="rounded bg-slate-300 dark:bg-zinc-700 px-3 py-1.5 text-xs text-slate-700 dark:text-zinc-300 hover:bg-slate-400 dark:hover:bg-zinc-600">
-          New game
-        </button>
       </div>
     </div>
   );

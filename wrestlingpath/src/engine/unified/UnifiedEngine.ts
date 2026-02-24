@@ -4,11 +4,50 @@
  */
 
 import { SeededRNG } from '../SeededRNG';
-import type { UnifiedState, LeagueKey, ChoiceItem, OffseasonEventItem, CustomStartOptions, WeekModifiers, ChoicePreview, HSScheduleEntry, CollegeScheduleEntry, CollegeTeammate, Opponent, OpponentPools, WeekSummary, RelationshipEntry, RelationshipActionItem, NextEventInfo, CollegeOffer, LifestyleState, HousingTier, CarTier, MealPlanTier, RecoveryTier } from './types';
+import type { UnifiedState, LeagueKey, ChoiceItem, OffseasonEventItem, CustomStartOptions, WeekModifiers, ChoicePreview, HSScheduleEntry, CollegeScheduleEntry, CollegeTeammate, Opponent, OpponentPools, WeekSummary, BracketParticipant, RelationshipEntry, RelationshipActionItem, NextEventInfo, CollegeOffer, LifestyleState, HousingTier, CarTier, MealPlanTier, RecoveryTier, ProgramTier, OfferType, NoOfferReason, LifePopup, LifeLogEntry, CustomLifestyleItemDef, PendingCompetitionState, PendingBracketState, PendingBracketPhase, CompetitionKind, PendingCompetitionMatch, CompletedCompetitionMatch, PendingTournamentPlay } from './types';
+import { generateLifePopups } from '@/data/lifePopups';
 import type { School } from '../types';
 import { SCHOOLS } from '@/data/schools';
+import { generateSeasonSchedule, NCAA_WEEK, SEASON_WEEKS, isPowerhouse } from '../college/SeasonSchedule';
+import {
+  runDoubleElimBracket,
+  validateBracketMatchSequence,
+  validateTournamentResult,
+  type TournamentPlayerState,
+  type TournamentOpponent,
+  type BracketMatchEntry,
+} from '../TournamentSim';
+import { simEliteMatch } from '../EliteMatchSim';
+import { createInitialMinigameState, generateExchangePrompt, resolveExchange, DECISION_TIMER_SECONDS, type MinigameWrestler, type MatchPosition } from '../MatchMinigame';
 
 const WEIGHT_CLASSES = [106, 113, 120, 126, 132, 138, 145, 152, 160, 170, 182, 195, 220, 285];
+
+/** 2025-style NIL tiers (wrestling): Top $250K–$1M, AA $40K–$150K, Starter P5 $10K–$50K, Average D1 $0–$10K. */
+const NIL_TIERS_D1 = [
+  { min: 250_000, max: 700_000 },   // tier 0: national champ / Hodge-level
+  { min: 40_000, max: 150_000 },    // tier 1: All-American
+  { min: 10_000, max: 50_000 },     // tier 2: starter at Power 5
+  { min: 0, max: 10_000 },          // tier 3: average D1
+] as const;
+/** D2/NAIA/JUCO scale factors vs D1 (wrestling NIL is smaller outside top programs). */
+const NIL_DIVISION_SCALE: Record<string, number> = { D1: 1, D2: 0.35, D3: 0.12, NAIA: 0.2, JUCO: 0.1 };
+/** Schools with strong wrestling NIL collectives (can push athletes into higher tier). */
+const STRONG_NIL_COLLECTIVE_IDS = new Set(['penn-state', 'iowa', 'oklahoma-state']);
+
+/** Program tier A–D: budget, offer slots, standards. Tier A = blue bloods, D = smaller programs. */
+const PROGRAM_TIER_BY_SCHOOL: Record<string, ProgramTier> = {
+  'iowa': 'A', 'penn-state': 'A', 'ohio-state': 'A', 'oklahoma-state': 'A',
+  'nc-state': 'B', 'michigan': 'B', 'iowa-state': 'B', 'cornell': 'B', 'virginia-tech': 'B', 'nebraska': 'B', 'minnesota': 'B', 'wisconsin': 'B', 'arizona-state': 'B', 'mizzou': 'B',
+  'virginia': 'C', 'rutgers': 'C', 'st-cloud': 'B', 'nebraska-kearney': 'C', 'central-oklahoma': 'C', 'pittsburg-state': 'C', 'grand-view': 'B', 'life': 'B', 'lindenwood': 'C', 'mckendree': 'C',
+  'wartburg': 'D', 'augsburg': 'D', 'north-central': 'D', 'coe': 'D', 'doane': 'C', 'iowa-central': 'C', 'northeastern-ok': 'D', 'clackamas': 'D', 'western-wyoming': 'D',
+};
+/** Tier config: slots per recruiting class, min recruiting score, base offer chance (0–1), NIL pool range (annual $). */
+const RECRUITING_TIER_CFG: Record<ProgramTier, { slots: number; minRecruiting: number; baseChance: number; nilPoolMin: number; nilPoolMax: number }> = {
+  A: { slots: 4, minRecruiting: 55, baseChance: 0.35, nilPoolMin: 600_000, nilPoolMax: 1_200_000 },
+  B: { slots: 5, minRecruiting: 40, baseChance: 0.45, nilPoolMin: 200_000, nilPoolMax: 500_000 },
+  C: { slots: 6, minRecruiting: 28, baseChance: 0.55, nilPoolMin: 40_000, nilPoolMax: 150_000 },
+  D: { slots: 8, minRecruiting: 15, baseChance: 0.65, nilPoolMin: 0, nilPoolMax: 40_000 },
+};
 /** NCAA college weight classes (different from HS). */
 const COLLEGE_WEIGHT_CLASSES = [125, 133, 141, 149, 157, 165, 174, 184, 197, 285];
 const HS_LEAGUES: LeagueKey[] = ['HS_JV', 'HS_VARSITY', 'HS_ELITE'];
@@ -39,7 +78,6 @@ const SUPER32_WEEK = 36;
 const WNO_WEEK = 37;
 const WNO_RECRUITING_MIN = 68;
 const WEEK_CONFERENCE_COLLEGE = 8;
-const WEEK_NCAA = 12;
 const DISTRICTS_QUALIFY_TOP = 4;
 const CONFERENCE_QUALIFY_TOP = 3;
 const US_OPEN_WEEK = 18;
@@ -53,6 +91,8 @@ const OFFSEASON_EVENTS: Record<string, { name: string; week: number; cost: numbe
 };
 const HOURS_PER_WEEK = 40;
 const BASE_HOURS_AUTO = 0;
+/** Minimum grades (0–100) to be eligible to wrestle. Below this = academic ineligibility. */
+const MIN_GRADES_TO_WRESTLE = 50;
 
 function defaultWeekModifiers(): WeekModifiers {
   return {
@@ -204,10 +244,22 @@ export class UnifiedEngine {
     if (this.state.didRestOrRehabThisWeek == null) this.state.didRestOrRehabThisWeek = false;
     if (!Array.isArray(this.state.offers)) this.state.offers = [];
     if (this.state.pendingCollegeChoice == null) this.state.pendingCollegeChoice = false;
+    if (this.state.pendingCollegeGraduation == null) this.state.pendingCollegeGraduation = false;
+    if (this.state.careerEnded == null) this.state.careerEnded = false;
+    if (isInCollege(this.state) && (this.state.eligibilityYearsRemaining ?? 0) <= 0 && !this.state.careerEnded && !this.state.pendingCollegeGraduation) this.state.pendingCollegeGraduation = true;
     if (this.state.eligibilityYearsRemaining == null && !HS_LEAGUES.includes(this.state.league)) this.state.eligibilityYearsRemaining = 4;
     if (!this.state.lifestyle) this.state.lifestyle = UnifiedEngine.DEFAULT_LIFESTYLE;
     if (!Array.isArray(this.state.stats.usOpenPlacements)) this.state.stats.usOpenPlacements = [];
     if (!Array.isArray(this.state.stats.worldChampionshipPlacements)) this.state.stats.worldChampionshipPlacements = [];
+    if (this.state.popularity == null) this.state.popularity = 50;
+    if (this.state.coachTrust == null) this.state.coachTrust = 50;
+    if (!Array.isArray(this.state.pendingLifePopups)) this.state.pendingLifePopups = [];
+    if (!Array.isArray(this.state.lifeLog)) this.state.lifeLog = [];
+    if (this.state.allowRelationshipEvents == null) this.state.allowRelationshipEvents = true;
+    if (this.state.relationshipStatus == null) this.state.relationshipStatus = 'NONE';
+    if (this.state.relationshipMeter == null) this.state.relationshipMeter = 0;
+    if (this.state.pendingCompetition == null) this.state.pendingCompetition = null;
+    if (this.state.pendingTournamentPlay == null) this.state.pendingTournamentPlay = null;
     this.rng = SeededRNG.deserialize(this.state.seed, this.state.rngState);
     // Recompute overall from current attributes so it always matches (fixes loaded saves with stale overall)
     updateRating(this.state);
@@ -289,8 +341,10 @@ export class UnifiedEngine {
       hoursLeftThisWeek: HOURS_PER_WEEK,
       studiedThisWeek: false,
       trainedThisWeek: false,
+      weeksWithoutTraining: 0,
       didRestOrRehabThisWeek: false,
       weekModifiers: defaultWeekModifiers(),
+      autoTrainOnAdvance: true,
       relationship: null,
       relationships: generateInitialRelationships(rng, options.name || 'Wrestler'),
       offseasonEventsUsedThisYear: {},
@@ -300,6 +354,13 @@ export class UnifiedEngine {
       collegeRoster: null,
       lastWeekSummary: null,
       lifestyle: UnifiedEngine.DEFAULT_LIFESTYLE,
+      pendingLifePopups: [],
+      lifeLog: [],
+      popularity: 50,
+      coachTrust: 50,
+      allowRelationshipEvents: true,
+      relationshipStatus: 'NONE',
+      relationshipMeter: 0,
     };
     if (custom) {
       if (custom.technique != null) state.technique = clamp(0, 100, custom.technique);
@@ -331,7 +392,6 @@ export class UnifiedEngine {
     train_conditioning: 10,
     train_strength: 8,
     study_film: 4,
-    compete: 12,
     rest: 4,
     study: 6,
     hang_out: 4,
@@ -368,6 +428,7 @@ export class UnifiedEngine {
     car: 'none',
     mealPlan: 'none',
     recoveryEquipment: 'none',
+    purchasedCustomIds: [],
   };
 
   /** Weekly cost per housing tier (rent). */
@@ -413,16 +474,38 @@ export class UnifiedEngine {
   private static readonly MEAL_PLAN_ORDER: MealPlanTier[] = ['none', 'basic', 'good', 'premium'];
   private static readonly RECOVERY_ORDER: RecoveryTier[] = ['none', 'basic', 'pro'];
 
+  /** Custom one-time (or subscription) lifestyle purchases — specific items, some expensive. */
+  private static readonly CUSTOM_LIFESTYLE_ITEMS: CustomLifestyleItemDef[] = [
+    { id: 'quality_headgear', name: 'Quality competition headgear', description: 'Better fit and protection.', cost: 120, effectSummary: '−3% injury risk', effects: { injuryRiskMult: -0.03 } },
+    { id: 'compression_boots', name: 'Compression recovery boots', description: 'Speeds recovery between sessions.', cost: 380, effectSummary: '−4% injury risk, +1 health', effects: { injuryRiskMult: -0.04, health: 1 } },
+    { id: 'sleep_tracker', name: 'Sleep tracker + program', description: 'Optimize sleep and recovery.', cost: 180, effectSummary: '+2 health, better energy', effects: { health: 2 } },
+    { id: 'custom_singlet', name: 'Custom team singlet', description: 'Your colors, your fit.', cost: 220, effectSummary: '+2 happiness', effects: { happiness: 2 } },
+    { id: 'private_mat', name: 'Private mat time (10 sessions)', description: 'Extra drilling when the room is empty.', cost: 600, effectSummary: '+2% training effect', effects: { trainingMult: 0.02 } },
+    { id: 'nutritionist', name: 'Personal nutritionist (semester)', description: 'Meal plans and supplement advice.', cost: 1800, effectSummary: '+3% training, +2 health', effects: { trainingMult: 0.03, health: 2 } },
+    { id: 'elite_recovery', name: 'Elite recovery package', description: 'Theragun, NormaTec, and protocols.', cost: 2200, effectSummary: '−8% injury risk, +3 health', effects: { injuryRiskMult: -0.08, health: 3 } },
+    { id: 'media_suit', name: 'Designer suit for media', description: 'Look the part for interviews and NIL.', cost: 950, effectSummary: '+4 popularity', effects: { popularity: 4 } },
+    { id: 'cold_plunge', name: 'Cold plunge tub', description: 'Home ice baths for recovery.', cost: 4500, effectSummary: '−5% injury risk, +2 health, −2 stress', effects: { injuryRiskMult: -0.05, health: 2, stress: -2 } },
+    { id: 'chef_month', name: 'Chef-prepared meals (1 month)', description: 'High-end fuel, no cooking.', cost: 1200, weeklyCost: 0, effectSummary: '+4 health, +2% training', effects: { health: 4, trainingMult: 0.02 } },
+    { id: 'luxury_watch', name: 'Luxury watch', description: 'Statement piece for appearances.', cost: 3200, effectSummary: '+5 happiness, +2 popularity', effects: { happiness: 5, popularity: 2 } },
+    { id: 'home_sauna', name: 'In-home sauna', description: 'Heat and recovery at home.', cost: 7500, effectSummary: '−3% injury risk, +3 health, −3 stress', effects: { injuryRiskMult: -0.03, health: 3, stress: -3 } },
+    { id: 'premium_physio', name: 'Premium physio package (6 months)', description: 'Weekly bodywork and screening.', cost: 3600, weeklyCost: 0, effectSummary: '−6% injury risk, +4 health', effects: { injuryRiskMult: -0.06, health: 4 } },
+  ];
+
   getLifestyle(): LifestyleState {
     return this.state.lifestyle ?? UnifiedEngine.DEFAULT_LIFESTYLE;
   }
 
-  /** Weekly cost from housing + car upkeep + meal plan. */
+  /** Weekly cost from housing + car upkeep + meal plan + any custom item weekly costs. */
   getLifestyleWeeklyCost(): number {
     const L = this.getLifestyle();
-    return UnifiedEngine.HOUSING_WEEKLY[L.housing]
+    let sum = UnifiedEngine.HOUSING_WEEKLY[L.housing]
       + UnifiedEngine.CAR_WEEKLY[L.car]
       + UnifiedEngine.MEAL_PLAN_WEEKLY[L.mealPlan];
+    const purchased = L.purchasedCustomIds ?? [];
+    for (const item of UnifiedEngine.CUSTOM_LIFESTYLE_ITEMS) {
+      if (purchased.includes(item.id) && (item.weeklyCost ?? 0) > 0) sum += item.weeklyCost!;
+    }
+    return sum;
   }
 
   /** One-time cost to upgrade to the given tier (for car or recovery). Current tier cost is not refunded. */
@@ -458,6 +541,41 @@ export class UnifiedEngine {
     const oneTimeCost = key === 'car' ? UnifiedEngine.CAR_COST[next as CarTier]
       : key === 'recoveryEquipment' ? UnifiedEngine.RECOVERY_COST[next as RecoveryTier] : undefined;
     return { tier: next, weeklyCost, oneTimeCost, label: labels[next] ?? next };
+  }
+
+  /** Catalog of custom lifestyle items with owned flag and affordability. */
+  getCustomLifestyleCatalog(): (CustomLifestyleItemDef & { owned: boolean; canAfford: boolean })[] {
+    const L = this.getLifestyle();
+    const purchased = new Set(L.purchasedCustomIds ?? []);
+    const money = this.state.money ?? 0;
+    return UnifiedEngine.CUSTOM_LIFESTYLE_ITEMS.map((item) => ({
+      ...item,
+      owned: purchased.has(item.id),
+      canAfford: !purchased.has(item.id) && money >= item.cost,
+    }));
+  }
+
+  /** Purchase a custom lifestyle item (one-time cost). Returns success and message. */
+  purchaseCustomItem(itemId: string): { success: boolean; message: string } {
+    const s = this.state;
+    const L = s.lifestyle ?? UnifiedEngine.DEFAULT_LIFESTYLE;
+    const purchased = L.purchasedCustomIds ?? [];
+    if (purchased.includes(itemId)) return { success: false, message: 'Already owned.' };
+    const item = UnifiedEngine.CUSTOM_LIFESTYLE_ITEMS.find((i) => i.id === itemId);
+    if (!item) return { success: false, message: 'Unknown item.' };
+    const money = s.money ?? 0;
+    if (money < item.cost) return { success: false, message: `Need $${item.cost}; you have $${money}.` };
+    if (!s.lifestyle) s.lifestyle = { ...UnifiedEngine.DEFAULT_LIFESTYLE };
+    if (!s.lifestyle.purchasedCustomIds) s.lifestyle.purchasedCustomIds = [];
+    s.lifestyle.purchasedCustomIds = [...s.lifestyle.purchasedCustomIds, itemId];
+    s.money = Math.max(0, money - item.cost);
+    if (item.effects?.health != null) s.health = Math.min(100, (s.health ?? 100) + item.effects.health);
+    if (item.effects?.happiness != null) s.happiness = Math.min(100, (s.happiness ?? 75) + item.effects.happiness);
+    if (item.effects?.stress != null) s.stress = Math.max(0, (s.stress ?? 50) + item.effects.stress);
+    if (item.effects?.popularity != null) s.popularity = Math.min(100, (s.popularity ?? 50) + item.effects.popularity);
+    addStory(s, `Bought ${item.name}.`);
+    this.saveRng();
+    return { success: true, message: `Purchased ${item.name}.` };
   }
 
   /** All current lifestyle options for UI (current tier + next upgrade if any). */
@@ -529,6 +647,14 @@ export class UnifiedEngine {
     if (L.mealPlan === 'premium') { w.trainingMult += 0.06; w.reasons.push('Premium meals'); }
     if (L.recoveryEquipment === 'basic') { w.injuryRiskMult -= 0.05; w.reasons.push('Recovery gear'); }
     if (L.recoveryEquipment === 'pro') { w.injuryRiskMult -= 0.12; w.reasons.push('Pro recovery'); }
+    const purchased = L.purchasedCustomIds ?? [];
+    for (const id of purchased) {
+      const item = UnifiedEngine.CUSTOM_LIFESTYLE_ITEMS.find((i) => i.id === id);
+      if (!item?.effects) continue;
+      if (item.effects.performanceMult != null) { w.performanceMult += item.effects.performanceMult; w.reasons.push(item.name); }
+      if (item.effects.trainingMult != null) { w.trainingMult += item.effects.trainingMult; }
+      if (item.effects.injuryRiskMult != null) { w.injuryRiskMult += item.effects.injuryRiskMult; }
+    }
   }
 
   private applyWeekModifierDeltas(
@@ -563,8 +689,6 @@ export class UnifiedEngine {
         return { ...base, energy: -20 };
       case 'study_film':
         return { ...base, energy: 5 };
-      case 'compete':
-        return { ...base, energy: -14 };
       case 'rest':
         return { ...base, health: 3, happiness: 2, energy: 28, stress: -2 };
       case 'study':
@@ -600,7 +724,6 @@ export class UnifiedEngine {
       { key: 'train_conditioning', label: 'Train conditioning', tab: 'training' },
       { key: 'train_strength', label: 'Lift weights', tab: 'training' },
       { key: 'study_film', label: 'Study film', tab: 'training' },
-      ...(isInCollege(s) ? [{ key: 'compete', label: 'Compete / scrimmage', tab: 'training' as const }] : []),
       { key: 'rest', label: 'Rest and recover', tab: 'training' },
       { key: 'study', label: 'Study', tab: 'life' },
       { key: 'hang_out', label: 'Hang out', tab: 'life' },
@@ -642,29 +765,17 @@ export class UnifiedEngine {
     const energyCost = 20;
     const eff = getEffectiveModifiers(s);
     const canTrainHard = (s.energy ?? 100) >= 25;
-    const mult = () => {
-      const cap = s.yearlyGrowthCap ?? 14;
-      const used = s.yearlyGrowthUsed ?? 0;
-      if (used >= cap) return 0;
-      const ef = 0.4 + 0.6 * ((s.energy ?? 100) / 100);
-      const rem = cap - used;
-      const cf = rem <= 2 ? 0.2 : rem <= 4 ? 0.6 : 1;
-      return Math.min(1, ef * cf);
-    };
-    /** useYearlyCap: false for conditioning/strength so they can grow every week when you train; true for technique/matIQ (skill cap). */
-    const addGrowth = (attr: keyof UnifiedState, raw: number, useYearlyCap = true) => {
+    /** Growth multiplier: energy + training mods only (no yearly cap — hours/energy are the limits). */
+    const mult = () => Math.min(1, (0.4 + 0.6 * ((s.energy ?? 100) / 100)) * eff.trainingMult);
+    const addGrowth = (attr: keyof UnifiedState, raw: number, _useYearlyCap = true) => {
       const cur = (s[attr] as number) ?? 50;
       const ceiling = s.potentialCeiling ?? 99;
       const diminished = raw > 0 ? (cur >= 92 ? raw * 0.25 : cur >= 85 ? raw * 0.5 : raw) : 0;
-      const effectiveMult = useYearlyCap ? mult() : (0.5 + 0.5 * ((s.energy ?? 100) / 100)) * eff.trainingMult;
-      const actual = useYearlyCap
-        ? Math.floor(diminished * effectiveMult)
-        : Math.floor(diminished * Math.min(1, effectiveMult));
-      const remainingCap = useYearlyCap ? (s.yearlyGrowthCap ?? 14) - (s.yearlyGrowthUsed ?? 0) : actual + 1;
-      const capped = Math.min(ceiling - cur, actual, remainingCap);
+      const effectiveMult = mult();
+      const actual = Math.floor(diminished * Math.min(1, effectiveMult));
+      const capped = Math.min(ceiling - cur, actual);
       if (capped > 0) {
         (s as unknown as Record<string, number>)[attr] = cur + capped;
-        if (useYearlyCap) s.yearlyGrowthUsed = (s.yearlyGrowthUsed ?? 0) + capped;
       }
     };
 
@@ -675,13 +786,14 @@ export class UnifiedEngine {
         s.energy = Math.max(0, (s.energy ?? 100) - energyCost);
         addGrowth('technique', canTrainHard ? this.rng.int(1, 3) : this.rng.int(0, 1));
         if (s.techniqueTranslationWeeks) s.techniqueTranslationWeeks--;
+        s.conditioning = Math.min(100, (s.conditioning ?? 50) + (canTrainHard ? 1 : 0));
         addStory(s, canTrainHard ? 'You drilled hard. Technique improved.' : 'You were tired; light technique work.');
         break;
       case 'train_conditioning':
         s.trainedThisWeek = true;
         s.consecutiveRestWeeks = 0;
         s.energy = Math.max(0, (s.energy ?? 100) - energyCost);
-        addGrowth('conditioning', canTrainHard ? this.rng.int(1, 3) : this.rng.int(0, 1), false);
+        addGrowth('conditioning', canTrainHard ? this.rng.int(3, 6) : this.rng.int(1, 3), false);
         addStory(s, 'You pushed your cardio. Gas tank improved.');
         break;
       case 'train_strength':
@@ -689,6 +801,7 @@ export class UnifiedEngine {
         s.consecutiveRestWeeks = 0;
         s.energy = Math.max(0, (s.energy ?? 100) - energyCost);
         addGrowth('strength', canTrainHard ? this.rng.int(0, 2) : this.rng.int(0, 1), false);
+        s.conditioning = Math.min(100, (s.conditioning ?? 50) + (canTrainHard ? 1 : 0));
         addStory(s, 'You hit the weight room. Stronger.');
         break;
       case 'study_film':
@@ -696,22 +809,6 @@ export class UnifiedEngine {
         addGrowth('matIQ', this.rng.int(0, 2));
         s.energy = Math.min(100, (s.energy ?? 100) + 5);
         addStory(s, 'Film study paid off. Mat IQ up.');
-        break;
-      case 'compete':
-        s.trainedThisWeek = true;
-        s.energy = Math.max(0, (s.energy ?? 100) - 14);
-        const matches = this.rng.int(2, 5);
-        let w = 0, l = 0;
-        for (let i = 0; i < matches; i++) {
-          let winChance = clamp(0.02, 0.98, 0.45 + (s.overallRating ?? 50) / 120);
-          winChance = clamp(0.02, 0.98, winChance * eff.performanceMult);
-          if (this.rng.float() < winChance) { s.stats.matchesWon++; s.stats.seasonWins++; w++; }
-          else { s.stats.matchesLost++; s.stats.seasonLosses++; l++; }
-        }
-        s.happiness = Math.min(100, (s.happiness ?? 75) + this.rng.int(2, 6));
-        s.stats.hsRecord.matchesWon += w;
-        s.stats.hsRecord.matchesLost += l;
-        addStory(s, `You competed. Went ${w}-${l} this week.`);
         break;
       case 'rest':
         s.didRestOrRehabThisWeek = true;
@@ -811,75 +908,210 @@ export class UnifiedEngine {
     return this.collegeWeightForNeed(hsWeight);
   }
 
+  /** NIL tier 0–3 from recruiting/rating + accolades (for 2025-style NIL ranges). */
+  private getNILTierForPlayer(isTransfer: boolean): number {
+    const s = this.state;
+    if (isTransfer) {
+      const rating = s.overallRating ?? 50;
+      const ncaaTitles = s.stats?.ncaaTitles ?? 0;
+      const allAmerican = (s.stats?.ncaaAllAmerican ?? 0) >= 1;
+      if (ncaaTitles >= 1 || rating >= 90) return 0;   // top tier
+      if (allAmerican || rating >= 80) return 1;      // AA
+      if (rating >= 70) return 2;                     // starter P5
+      return 3;
+    }
+    const recScore = s.recruitingScore ?? 50;
+    const stateTitles = s.stats?.stateTitles ?? 0;
+    if (recScore >= 88 || stateTitles >= 2) return 0;
+    if (recScore >= 72 || stateTitles >= 1) return 1;
+    if (recScore >= 58) return 2;
+    return 3;
+  }
+
+  /** One NIL amount in range for division; strong-collective schools can bump tier up once. */
+  private rollNILForOffer(tier: number, division: string, schoolId: string): number {
+    const effectiveTier = STRONG_NIL_COLLECTIVE_IDS.has(schoolId) && tier > 0 ? Math.max(0, tier - 1) : tier;
+    const scale = NIL_DIVISION_SCALE[division] ?? 0.15;
+    const d1 = NIL_TIERS_D1[Math.min(effectiveTier, 3)];
+    const min = Math.round(d1.min * scale);
+    const max = Math.round(d1.max * scale);
+    return this.rng.int(min, Math.max(min, max));
+  }
+
+  /** Max NIL for negotiation cap (tier + division + strong collective). */
+  private getNILMaxForTier(tier: number, division: string, schoolId: string): number {
+    const effectiveTier = STRONG_NIL_COLLECTIVE_IDS.has(schoolId) && tier > 0 ? Math.max(0, tier - 1) : tier;
+    const scale = NIL_DIVISION_SCALE[division] ?? 0.15;
+    const d1 = NIL_TIERS_D1[Math.min(effectiveTier, 3)];
+    return Math.round(d1.max * scale);
+  }
+
+  private getProgramTier(schoolId: string): ProgramTier {
+    return PROGRAM_TIER_BY_SCHOOL[schoolId] ?? 'D';
+  }
+
+  /** Build or reuse recruiting context for this class (slots used + committed weights per school). */
+  private ensureRecruitingContext(): void {
+    const s = this.state;
+    if (s.recruitingClassContext) return;
+    const ctx: Record<string, { slotsUsed: number; committedWeights: number[] }> = {};
+    for (const sc of SCHOOLS) {
+      const tier = this.getProgramTier(sc.id);
+      const cfg = RECRUITING_TIER_CFG[tier];
+      const slotsUsed = this.rng.int(0, Math.max(0, cfg.slots - 1)); // 0 to slots-1 used by "other" recruits
+      const weightsWithNeed = COLLEGE_WEIGHT_CLASSES.filter((w) => (sc.needsByWeight[w] ?? 0) >= 1);
+      const numCommitted = Math.min(slotsUsed, weightsWithNeed.length);
+      const committedWeights: number[] = [];
+      const shuffled = [...weightsWithNeed].sort(() => this.rng.float() - 0.5);
+      for (let i = 0; i < numCommitted; i++) committedWeights.push(shuffled[i]);
+      ctx[sc.id] = { slotsUsed, committedWeights };
+    }
+    s.recruitingClassContext = ctx;
+  }
+
+  /** Human-readable no-offer reason for UI. */
+  private noOfferReasonMessage(reason: NoOfferReason, schoolName: string): string {
+    switch (reason) {
+      case 'set_at_your_weight': return `${schoolName}: Set at your weight.`;
+      case 'budget_used': return `${schoolName}: Budget used for this class.`;
+      case 'already_filled_spot': return `${schoolName}: Already filled spot at your weight.`;
+      case 'no_slots_left': return `${schoolName}: No recruiting slots left.`;
+      case 'academic_standards': return `${schoolName}: Academic standards not met.`;
+      case 'not_a_fit': return `${schoolName}: Not a fit at this time.`;
+      default: return `${schoolName}: No offer.`;
+    }
+  }
+
+  /**
+   * Evaluate whether a school will offer the player. Uses tier, need, slots, budget, and probability.
+   * Returns either an offer or a clear no-offer reason.
+   */
+  private evaluateSchoolOffer(sc: School, collegeWc: number, recScore: number, gpa: number): { offer: CollegeOffer } | { noOffer: true; reason: NoOfferReason } {
+    const s = this.state;
+    this.ensureRecruitingContext();
+    const ctx = s.recruitingClassContext![sc.id];
+    if (!ctx) return { noOffer: true, reason: 'not_a_fit' };
+    const tier = this.getProgramTier(sc.id);
+    const cfg = RECRUITING_TIER_CFG[tier];
+    const need = sc.needsByWeight[collegeWc] ?? sc.needsByWeight[this.collegeWeightForNeed(collegeWc)] ?? 0;
+    const week = s.week ?? 1;
+    const year = s.year ?? 1;
+
+    if (gpa < sc.academicMinGPA) return { noOffer: true, reason: 'academic_standards' };
+    if (need < 1) return { noOffer: true, reason: 'set_at_your_weight' };
+    if (ctx.committedWeights.includes(collegeWc)) return { noOffer: true, reason: 'already_filled_spot' };
+    if (ctx.slotsUsed >= cfg.slots) return { noOffer: true, reason: 'no_slots_left' };
+    const budgetTotal = sc.scholarshipBudget ?? 0;
+    const avgCostPerRecruit = tier === 'D' ? 0 : Math.max(20000, budgetTotal / (cfg.slots * 4));
+    const budgetUsed = ctx.slotsUsed * avgCostPerRecruit;
+    if (budgetTotal > 0 && budgetUsed >= budgetTotal * 0.92) return { noOffer: true, reason: 'budget_used' };
+    if (recScore < cfg.minRecruiting) return { noOffer: true, reason: 'not_a_fit' };
+
+    const needNorm = Math.min(1, need / 5);
+    const talentFit = (recScore - cfg.minRecruiting) / (100 - cfg.minRecruiting);
+    const competitionPenalty = ctx.slotsUsed / cfg.slots;
+    const academicBonus = gpa >= sc.academicMinGPA + 0.3 ? 0.08 : 0;
+    let chance = cfg.baseChance + needNorm * 0.2 + talentFit * 0.25 - competitionPenalty * 0.15 + academicBonus;
+    chance = clamp(0.08, 0.92, chance);
+    if (this.rng.float() > chance) return { noOffer: true, reason: 'not_a_fit' };
+
+    const offer = this.buildRecruitingOffer(sc, collegeWc, recScore, need, week, year);
+    return { offer };
+  }
+
+  /** Build one offer: type (full/partial/preferred walkon/walkon) and NIL from school pool by projected impact. */
+  private buildRecruitingOffer(sc: School, collegeWc: number, recScore: number, need: number, week: number, year: number): CollegeOffer {
+    const s = this.state;
+    const tier = this.getProgramTier(sc.id);
+    const cfg = RECRUITING_TIER_CFG[tier];
+    const recNorm = recScore / 100;
+    const needNorm = Math.min(1, need / 5);
+    const depth = sc.rosterDepth[collegeWc] ?? 2;
+    const wouldStartSoon = need >= 3 && depth <= 2;
+    const stateChamp = (s.stats?.stateTitles ?? 0) >= 1;
+    const marketability = recNorm * 0.7 + (stateChamp ? 0.2 : 0);
+
+    let offerType: OfferType;
+    if (recNorm >= 0.75 && needNorm >= 0.5) offerType = 'full';
+    else if (recNorm >= 0.5 || needNorm >= 0.6) offerType = 'partial';
+    else if (recNorm >= 0.35 || need >= 2) offerType = 'preferred_walkon';
+    else offerType = 'walkon';
+
+    let tuitionPct: number;
+    if (offerType === 'full') tuitionPct = this.rng.int(85, 100);
+    else if (offerType === 'partial') tuitionPct = clamp(25, 75, 25 + Math.floor((needNorm * 30 + recNorm * 25) * (0.9 + this.rng.float() * 0.2)));
+    else tuitionPct = 0;
+
+    const nilPool = cfg.nilPoolMin + this.rng.int(0, Math.max(0, cfg.nilPoolMax - cfg.nilPoolMin));
+    const poolScale = sc.division === 'D1' ? 1 : sc.division === 'D2' ? 0.4 : sc.division === 'NAIA' ? 0.25 : 0.12;
+    const effectivePool = Math.round(nilPool * poolScale);
+    const starterShare = wouldStartSoon ? this.rng.float() * 0.25 + 0.15 : this.rng.float() * 0.06 + 0.02;
+    const nilAnnual = Math.round(effectivePool * starterShare * marketability);
+    const housingStipend = sc.division === 'D1' ? this.rng.int(0, 2000) : this.rng.int(0, 800);
+    const mealPlanPct = offerType === 'full' ? this.rng.int(40, 80) : offerType === 'partial' ? this.rng.int(0, 50) : 0;
+    const guaranteedStarter = wouldStartSoon && recNorm >= 0.65 && this.rng.float() < 0.4;
+
+    return {
+      id: `offer_${sc.id}_${year}_${week}`,
+      schoolId: sc.id,
+      schoolName: sc.name,
+      division: sc.division as LeagueKey,
+      offerType,
+      tuitionCoveredPct: tuitionPct,
+      nilAnnual,
+      housingStipend,
+      mealPlanPct,
+      guaranteedStarter,
+      deadlineWeek: week + 4,
+      offeredAtWeek: week,
+    };
+  }
+
   private generateCollegeOffers(): void {
     const s = this.state;
     const gpa = this.gradesToGPA(s.grades ?? 75);
     const recScore = clamp(0, 100, s.recruitingScore ?? 50);
     const wc = s.weightClass ?? 145;
     const collegeWc = this.collegeWeightForNeed(wc);
-    const needAt = (sc: School) => sc.needsByWeight[collegeWc] ?? sc.needsByWeight[wc] ?? 0;
-    const meetsGPA = (sc: School) => sc.academicMinGPA <= gpa;
-    const hasNeed = (sc: School) => needAt(sc) >= 1;
+    this.ensureRecruitingContext();
 
     const byDivision = {
-      D1: SCHOOLS.filter((sc) => sc.division === 'D1' && meetsGPA(sc) && hasNeed(sc)),
-      D2: SCHOOLS.filter((sc) => sc.division === 'D2' && meetsGPA(sc) && hasNeed(sc)),
-      D3: SCHOOLS.filter((sc) => sc.division === 'D3' && meetsGPA(sc) && hasNeed(sc)),
-      NAIA: SCHOOLS.filter((sc) => sc.division === 'NAIA' && meetsGPA(sc) && hasNeed(sc)),
-      JUCO: SCHOOLS.filter((sc) => sc.division === 'JUCO' && meetsGPA(sc) && hasNeed(sc)),
+      D1: SCHOOLS.filter((sc) => sc.division === 'D1'),
+      D2: SCHOOLS.filter((sc) => sc.division === 'D2'),
+      D3: SCHOOLS.filter((sc) => sc.division === 'D3'),
+      NAIA: SCHOOLS.filter((sc) => sc.division === 'NAIA'),
+      JUCO: SCHOOLS.filter((sc) => sc.division === 'JUCO'),
     };
-    if (byDivision.JUCO.length === 0) byDivision.JUCO = SCHOOLS.filter((sc) => sc.division === 'JUCO');
-    if (byDivision.NAIA.length === 0) byDivision.NAIA = SCHOOLS.filter((sc) => sc.division === 'NAIA');
-
     const pick = (arr: School[], n: number): School[] => {
       const sh = [...arr].sort(() => this.rng.float() - 0.5);
       return sh.slice(0, Math.min(n, sh.length));
     };
     let pool: School[] = [];
     if (recScore >= 70) {
-      pool = [...pick(byDivision.D1, 4), ...pick(byDivision.D2, 2)];
+      pool = [...pick(byDivision.D1, 6), ...pick(byDivision.D2, 3)];
     } else if (recScore >= 55) {
-      pool = [...pick(byDivision.D1, 2), ...pick(byDivision.D2, 2), ...pick(byDivision.D3, 1), ...pick(byDivision.NAIA, 1)];
+      pool = [...pick(byDivision.D1, 4), ...pick(byDivision.D2, 3), ...pick(byDivision.D3, 2), ...pick(byDivision.NAIA, 2)];
     } else if (recScore >= 40) {
-      pool = [...pick(byDivision.D1, 1), ...pick(byDivision.D2, 2), ...pick(byDivision.D3, 1), ...pick(byDivision.NAIA, 1), ...pick(byDivision.JUCO, 1)];
+      pool = [...pick(byDivision.D1, 2), ...pick(byDivision.D2, 3), ...pick(byDivision.D3, 2), ...pick(byDivision.NAIA, 2), ...pick(byDivision.JUCO, 2)];
     } else if (recScore >= 25) {
-      pool = [...pick(byDivision.D2, 1), ...pick(byDivision.D3, 2), ...pick(byDivision.NAIA, 1), ...pick(byDivision.JUCO, 2)];
+      pool = [...pick(byDivision.D2, 2), ...pick(byDivision.D3, 3), ...pick(byDivision.NAIA, 2), ...pick(byDivision.JUCO, 3)];
     } else {
-      pool = [...pick(byDivision.D3, 1), ...pick(byDivision.NAIA, 2), ...pick(byDivision.JUCO, 3)];
+      pool = [...pick(byDivision.D3, 2), ...pick(byDivision.NAIA, 3), ...pick(byDivision.JUCO, 4)];
     }
     pool = pool.filter((sc) => sc != null);
-    if (pool.length === 0) {
-      pool = [...byDivision.JUCO, ...byDivision.NAIA].slice(0, 6);
-    }
-    if (pool.length === 0) {
-      pool = SCHOOLS.filter((sc) => sc.division === 'JUCO' || sc.division === 'NAIA').slice(0, 6);
-    }
+    if (pool.length === 0) pool = SCHOOLS.slice(0, 10);
 
     const offers: CollegeOffer[] = [];
-    const recNorm = recScore / 100;
-    const week = s.week ?? 1;
-    const year = s.year ?? 1;
     for (const sc of pool) {
-      const need = needAt(sc) || 3;
-      const needNorm = Math.min(1, need / 5);
-      const tuitionPct = clamp(15, 85, 20 + Math.floor((needNorm * 30 + recNorm * 35) * (0.85 + this.rng.float() * 0.3)));
-      const nilCap = sc.division === 'D1' ? 8000 : sc.division === 'D2' ? 4000 : sc.division === 'NAIA' ? 3000 : 2000;
-      const nilAnnual = this.rng.int(0, Math.min(nilCap, Math.floor((sc.scholarshipBudget ?? 0) / 50)));
-      const housingStipend = sc.division === 'D1' ? this.rng.int(0, 2000) : this.rng.int(0, 800);
-      const mealPlanPct = this.rng.int(0, 50);
-      offers.push({
-        id: `offer_${sc.id}_${year}_${week}`,
-        schoolId: sc.id,
-        schoolName: sc.name,
-        division: sc.division as LeagueKey,
-        tuitionCoveredPct: tuitionPct,
-        nilAnnual,
-        housingStipend,
-        mealPlanPct,
-        guaranteedStarter: recNorm >= 0.7 && this.rng.float() < 0.35,
-        deadlineWeek: week + 4,
-        offeredAtWeek: week,
-      });
+      const result = this.evaluateSchoolOffer(sc, collegeWc, recScore, gpa);
+      if ('offer' in result) offers.push(result.offer);
+    }
+    if (offers.length === 0) {
+      for (const sc of [...byDivision.JUCO, ...byDivision.NAIA].slice(0, 6)) {
+        const result = this.evaluateSchoolOffer(sc, collegeWc, recScore, gpa);
+        if ('offer' in result) offers.push(result.offer);
+        if (offers.length >= 3) break;
+      }
     }
     s.offers = offers;
     this.saveRng();
@@ -893,8 +1125,729 @@ export class UnifiedEngine {
     return SCHOOLS;
   }
 
+  /** Request an offer from a specific school. Uses same recruiting logic; returns clear reason if no offer. */
+  requestCollegeOffer(schoolId: string): { success: boolean; message: string } {
+    const s = this.state;
+    if (!s.pendingCollegeChoice) return { success: false, message: 'Not choosing a college right now.' };
+    const existing = (s.offers ?? []).find((o: CollegeOffer) => o.schoolId === schoolId);
+    if (existing) return { success: false, message: 'You already have an offer from this school.' };
+    const sc = SCHOOLS.find((x) => x.id === schoolId);
+    if (!sc) return { success: false, message: 'School not found.' };
+    const gpa = this.gradesToGPA(s.grades ?? 75);
+    const recScore = clamp(0, 100, s.recruitingScore ?? 50);
+    const collegeWc = this.collegeWeightForNeed(s.weightClass ?? 145);
+    const result = this.evaluateSchoolOffer(sc, collegeWc, recScore, gpa);
+    if ('noOffer' in result) {
+      return { success: false, message: this.noOfferReasonMessage(result.reason, sc.name) };
+    }
+    const offer = { ...result.offer, id: `${result.offer.id}_req` };
+    if (!Array.isArray(s.offers)) s.offers = [];
+    s.offers.push(offer);
+    this.saveRng();
+    return { success: true, message: `${sc.name} sent you an offer.` };
+  }
+
   getCanAdvanceWeek(): boolean {
-    return !this.state.pendingCollegeChoice && !this.state.transferPortalActive;
+    return !this.state.pendingCollegeChoice && !this.state.transferPortalActive && !this.state.pendingCollegeGraduation && !this.state.careerEnded && !this.state.pendingCompetition && !this.state.pendingTournamentPlay;
+  }
+
+  getPendingCompetition(): PendingCompetitionState | null {
+    return (this.state.pendingCompetition ?? null) as PendingCompetitionState | null;
+  }
+
+  getPendingTournamentPlay(): PendingTournamentPlay | null {
+    return this.state.pendingTournamentPlay ?? null;
+  }
+
+  /** Start playing the bracket (minigame) after user clicked "Go to tournament" → "Play bracket". */
+  startTournamentPlay(): boolean {
+    const pt = this.state.pendingTournamentPlay;
+    if (!pt) return false;
+    const bracketSize = pt.bracketSize ?? 8;
+    this.startPendingBracketCompetition(pt.kind, pt.phaseLabel, pt.eventType ?? 'tournament', pt.opponents, pt.offseasonEventKey, bracketSize);
+    this.state.pendingTournamentPlay = null;
+    this.saveRng();
+    return true;
+  }
+
+  /** Simulate the full bracket without playing; updates record and summary, clears pendingTournamentPlay. */
+  simulateTournamentBracket(): boolean {
+    const pt = this.state.pendingTournamentPlay;
+    if (!pt) return false;
+    let roundIndex = 0;
+    const getOpponent = (_round: string): Opponent => {
+      const o = pt.opponents[roundIndex++ % pt.opponents.length] ?? { id: 'pad', name: 'Opponent', overallRating: 70, style: 'grinder', clutch: 50 };
+      return { ...o, overallRating: o.overallRating ?? 50 };
+    };
+    const bracketSize = pt.bracketSize ?? 8;
+    const { placement, matches } = this.runDoubleElimTournament(getOpponent, bracketSize);
+    const wins = matches.filter((m) => m.won).length;
+    const losses = matches.length - wins;
+    const summary: WeekSummary = {
+      week: pt.week,
+      year: pt.year,
+      phase: pt.phaseLabel,
+      eventType: pt.eventType,
+      message: [],
+      matches: matches.map((m) => ({
+        opponentName: m.opponentName,
+        opponentOverall: m.opponentOverall,
+        won: m.won,
+        method: m.method,
+      })),
+      recordChange: { wins, losses },
+      placement,
+      bracketParticipants: pt.bracketParticipants,
+    };
+    const s = this.state;
+    if (pt.kind === 'district') {
+      s.stateQualified = placement <= DISTRICTS_QUALIFY_TOP;
+      summary.message.push(s.stateQualified ? `Placed ${placement}. Qualified for state!` : `Placed ${placement}. Top ${DISTRICTS_QUALIFY_TOP} qualify.`);
+    } else if (pt.kind === 'state') {
+      s.stats.stateAppearances = (s.stats.stateAppearances ?? 0) + 1;
+      s.stats.hsRecord.stateAppearances = (s.stats.hsRecord?.stateAppearances ?? 0) + 1;
+      s.stats.statePlacements = s.stats.statePlacements ?? [];
+      s.stats.statePlacements.push(placement);
+      if (placement === 1) {
+        s.stats.stateTitles = (s.stats.stateTitles ?? 0) + 1;
+        s.stats.hsRecord.stateTitles = (s.stats.hsRecord?.stateTitles ?? 0) + 1;
+        s.accolades.push('State Champion (Year ' + s.year + ')');
+        summary.message.push('STATE CHAMPION!');
+      }
+      s.stateQualified = false;
+    }
+    if (pt.kind === 'tournament' && pt.conferenceQualifyTop != null) {
+      const dnp = wins <= 1;
+      s.ncaaQualified = !dnp && placement <= pt.conferenceQualifyTop;
+      if (s.ncaaQualified) summary.message.push('Qualified for NCAA Championships!');
+    }
+    if (pt.kind === 'offseason' && pt.offseasonEventKey) {
+      const key = pt.offseasonEventKey;
+      const isDnp = wins <= 1;
+      if (!isDnp) {
+        if (key === 'fargo') {
+          s.stats.fargoPlacements = s.stats.fargoPlacements ?? [];
+          s.stats.fargoPlacements.push(placement);
+          if (placement <= 2) s.accolades.push('Fargo ' + (placement === 1 ? 'Champ' : 'Runner-up') + ' (Year ' + s.year + ')');
+        } else if (key === 'super32') {
+          s.stats.super32Placements = s.stats.super32Placements ?? [];
+          s.stats.super32Placements.push(placement);
+          if (placement <= 2) s.accolades.push('Super 32 ' + (placement === 1 ? 'Champ' : 'Runner-up') + ' (Year ' + s.year + ')');
+        } else if (key === 'us_open') {
+          s.stats.usOpenPlacements = s.stats.usOpenPlacements ?? [];
+          s.stats.usOpenPlacements.push(placement);
+          if (placement <= 2) {
+            s.qualifiedForWorldChampionshipThisYear = true;
+            addStory(s, 'You qualified for the World Championship!');
+            s.accolades.push('US Open ' + (placement === 1 ? 'Champ' : 'Runner-up') + ' (Year ' + s.year + ')');
+          }
+        } else if (key === 'world_championship') {
+          s.stats.worldChampionshipPlacements = s.stats.worldChampionshipPlacements ?? [];
+          s.stats.worldChampionshipPlacements.push(placement);
+          if (placement <= 2) s.accolades.push('World ' + (placement === 1 ? 'Champion' : 'Runner-up') + ' (Year ' + s.year + ')');
+        }
+      }
+    }
+    summary.message.push(`${pt.phaseLabel}: ${wins}-${losses}.${placement != null ? ` Placed ${placement}.` : ''}`);
+    s.lastWeekSummary = summary;
+    addStory(s, summary.message[0] ?? pt.phaseLabel);
+    if (HS_LEAGUES.includes(s.league)) this.computeRecruitingScore();
+    s.pendingTournamentPlay = null;
+    this.saveRng();
+    return true;
+  }
+
+  /** Simulate the current match (no minigame); advances to next match or finalizes. */
+  simulatePendingCompetitionMatch(): boolean {
+    const s = this.state;
+    const pc = s.pendingCompetition ?? null;
+    if (!pc || !pc.current) return false;
+    if (pc.finished) return false;
+    const opponent = pc.current.opponent;
+    const isRival = pc.current.roundLabel.toLowerCase().includes('rival');
+    const { won, method } = this.simOneMatch(opponent, isRival);
+    const completed: CompletedCompetitionMatch = {
+      roundLabel: pc.current.roundLabel,
+      opponentName: opponent.name,
+      opponentOverall: opponent.overallRating,
+      won,
+      method,
+      myScore: 0,
+      oppScore: 0,
+      exchangeLog: [],
+    };
+    pc.completed = pc.completed ?? [];
+    pc.completed.push(completed);
+    if (won) {
+      s.stats.matchesWon++;
+      s.stats.seasonWins++;
+      if (HS_LEAGUES.includes(s.league)) s.stats.hsRecord.matchesWon++;
+      else s.stats.collegeRecord.matchesWon++;
+    } else {
+      s.stats.matchesLost++;
+      s.stats.seasonLosses++;
+      if (HS_LEAGUES.includes(s.league)) s.stats.hsRecord.matchesLost++;
+      else s.stats.collegeRecord.matchesLost++;
+    }
+    if (pc.bracket) {
+      this.advancePendingBracket(pc, won);
+    } else if (pc.queue) {
+      this.advancePendingQueue(pc);
+    } else {
+      pc.finished = true;
+      pc.finalResult = { won, method, myScore: 0, oppScore: 0, eliteEffectiveGap: 0, eliteBaseGap: 0, eliteFavoriteProb: won ? 1 : 0 };
+      this.finalizePendingCompetition(pc);
+      s.pendingCompetition = null;
+    }
+    s.pendingCompetition = pc;
+    this.saveRng();
+    return true;
+  }
+
+  playPendingCompetitionAction(actionKey: string, opts?: { timedOut?: boolean }): boolean {
+    const s = this.state;
+    const pc = s.pendingCompetition ?? null;
+    if (!pc || !pc.current) return false;
+    if (pc.finished) return false;
+
+    const timedOut = !!opts?.timedOut;
+    const res = resolveExchange(
+      pc.current.matchState,
+      actionKey,
+      this.rng,
+      { timerSeconds: pc.current.timerSeconds },
+      { timedOut }
+    );
+    pc.current.matchState = res.state;
+    if (res.nextPrompt) pc.current.prompt = res.nextPrompt;
+
+    // If match finished, commit the match and either advance bracket or finish competition.
+    if (res.state.finished && res.state.result) {
+      const r = res.state.result;
+      const completed: CompletedCompetitionMatch = {
+        roundLabel: pc.current.roundLabel,
+        opponentName: pc.current.opponent.name,
+        opponentOverall: pc.current.opponent.overallRating,
+        won: r.won,
+        method: r.method,
+        myScore: r.myScore,
+        oppScore: r.oppScore,
+        exchangeLog: [...res.state.logs],
+      };
+      pc.completed = pc.completed ?? [];
+      pc.completed.push(completed);
+
+      // Persist energy/health from the minigame match state
+      s.energy = clamp(0, 100, Math.round(res.state.my.energy));
+      s.health = clamp(0, 100, Math.round(100 - clamp(0, 1, res.state.my.injurySeverity) * 100));
+
+      // Update record per match (applies to all competition kinds)
+      if (completed.won) {
+        s.stats.matchesWon++;
+        s.stats.seasonWins++;
+        if (HS_LEAGUES.includes(s.league)) s.stats.hsRecord.matchesWon++;
+        else s.stats.collegeRecord.matchesWon++;
+      } else {
+        s.stats.matchesLost++;
+        s.stats.seasonLosses++;
+        if (HS_LEAGUES.includes(s.league)) s.stats.hsRecord.matchesLost++;
+        else s.stats.collegeRecord.matchesLost++;
+      }
+
+      // Decide next step based on competition type
+      if (pc.bracket) {
+        this.advancePendingBracket(pc, completed.won);
+      } else if (pc.queue) {
+        this.advancePendingQueue(pc);
+      } else {
+        pc.finalResult = r;
+        pc.finished = true;
+        this.finalizePendingCompetition(pc);
+        s.pendingCompetition = null;
+      }
+    }
+
+    // Only keep pending competition if it wasn't just cleared (match/bracket finished)
+    if (s.pendingCompetition != null) {
+      s.pendingCompetition = pc;
+    }
+    this.saveRng();
+    return true;
+  }
+
+  private toMinigameWrestlerFromPlayer(): MinigameWrestler {
+    const s = this.state;
+    const injurySeverity = clamp(0, 1, (100 - (s.health ?? 100)) / 100);
+    return {
+      name: s.name ?? 'You',
+      overallRating: s.overallRating ?? 50,
+      technique: s.technique ?? 50,
+      matIQ: s.matIQ ?? 50,
+      conditioning: s.conditioning ?? 50,
+      strength: s.strength ?? 50,
+      speed: s.speed ?? 50,
+      flexibility: s.flexibility ?? 50,
+      energy: s.energy ?? 100,
+      injurySeverity,
+    };
+  }
+
+  private toMinigameWrestlerFromOpponent(o: Opponent): MinigameWrestler {
+    const base = o.overallRating ?? 60;
+    const style = o.style ?? 'grinder';
+    const bump = (k: number) => clamp(35, 98, base + k + this.rng.int(-4, 4));
+    // Style-tilted attribute profiles derived from overall rating
+    const technique = bump(style === 'defensive' ? 6 : style === 'scrambler' ? 3 : 2);
+    const matIQ = bump(style === 'defensive' ? 8 : style === 'grinder' ? 3 : 2);
+    const conditioning = bump(style === 'grinder' ? 8 : 3);
+    const strength = bump(style === 'grinder' ? 10 : 2);
+    const speed = bump(style === 'scrambler' ? 10 : 2);
+    const flexibility = bump(style === 'scrambler' ? 8 : 2);
+    return {
+      name: o.name,
+      overallRating: base,
+      technique,
+      matIQ,
+      conditioning,
+      strength,
+      speed,
+      flexibility,
+      energy: 80,
+      injurySeverity: 0,
+    };
+  }
+
+  private startPendingSingleMatch(kind: CompetitionKind, phaseLabel: string, eventType: WeekSummary['eventType'], opponent: Opponent, roundLabel: string, offseasonEventKey?: string): void {
+    const s = this.state;
+    const id = `comp_${kind}_${s.year}_${s.week}_${this.rng.next()}`;
+    const my = this.toMinigameWrestlerFromPlayer();
+    const opp = this.toMinigameWrestlerFromOpponent(opponent);
+    const matchState = createInitialMinigameState(my, opp, 'NEUTRAL');
+    const prompt = generateExchangePrompt(matchState, { timerSeconds: DECISION_TIMER_SECONDS });
+    const current: PendingCompetitionMatch = {
+      id,
+      roundLabel,
+      opponent,
+      position: 'NEUTRAL',
+      matchState,
+      prompt,
+      timerSeconds: DECISION_TIMER_SECONDS,
+    };
+    const pc: PendingCompetitionState = {
+      kind,
+      week: s.week,
+      year: s.year,
+      phaseLabel,
+      eventType,
+      ...(offseasonEventKey ? { offseasonEventKey } : {}),
+      singleMatch: { opponent, roundLabel },
+      current,
+      completed: [],
+      finished: false,
+      finalResult: null,
+    };
+    s.pendingCompetition = pc;
+    addStory(s, `${phaseLabel}: Match vs ${opponent.name} (${opponent.overallRating}). Play the 3-period minigame.`);
+  }
+
+  private startPendingBracketCompetition(kind: CompetitionKind, phaseLabel: string, eventType: WeekSummary['eventType'], opponents: Opponent[], offseasonEventKey?: string, bracketSize: 8 | 16 = 8): void {
+    const s = this.state;
+    const needOpponents = bracketSize === 16 ? 15 : 7;
+    const list = [...opponents];
+    while (list.length < needOpponents) list.push({ id: 'pad', name: 'Opponent', overallRating: 70, style: 'grinder', clutch: 50 });
+    const bracketOpponents = list.slice(0, needOpponents);
+    const phase: PendingBracketPhase = bracketSize === 16 ? 'R16' : 'QF';
+    const bracket: PendingBracketState = { size: bracketSize, phase, opponents: bracketOpponents, opponentIndex: 0 };
+    const opp = bracket.opponents[bracket.opponentIndex++]!;
+    const my = this.toMinigameWrestlerFromPlayer();
+    const oppW = this.toMinigameWrestlerFromOpponent(opp);
+    const matchState = createInitialMinigameState(my, oppW, 'NEUTRAL');
+    const prompt = generateExchangePrompt(matchState, { timerSeconds: DECISION_TIMER_SECONDS });
+    const current: PendingCompetitionMatch = {
+      id: `comp_${kind}_${s.year}_${s.week}_${this.rng.next()}`,
+      roundLabel: this.bracketRoundLabel(bracket.phase),
+      opponent: opp,
+      position: 'NEUTRAL',
+      matchState,
+      prompt,
+      timerSeconds: DECISION_TIMER_SECONDS,
+    };
+    const pc: PendingCompetitionState = {
+      kind,
+      week: s.week,
+      year: s.year,
+      phaseLabel,
+      eventType,
+      ...(offseasonEventKey ? { offseasonEventKey } : {}),
+      bracket,
+      current,
+      completed: [],
+      finished: false,
+      placement: undefined,
+    };
+    s.pendingCompetition = pc;
+    addStory(s, `${phaseLabel}: Tournament bracket started. Play your matches one by one.`);
+  }
+
+  private startPendingQueueCompetition(kind: CompetitionKind, phaseLabel: string, eventType: WeekSummary['eventType'], matches: { opponent: Opponent; roundLabel: string }[]): void {
+    const s = this.state;
+    const first = matches[0] ?? { opponent: { id: 'pad', name: 'Opponent', overallRating: 70, style: 'grinder', clutch: 50 }, roundLabel: 'Dual' };
+    const id = `comp_${kind}_${s.year}_${s.week}_${this.rng.next()}`;
+    const my = this.toMinigameWrestlerFromPlayer();
+    const oppW = this.toMinigameWrestlerFromOpponent(first.opponent);
+    const matchState = createInitialMinigameState(my, oppW, 'NEUTRAL');
+    const prompt = generateExchangePrompt(matchState, { timerSeconds: DECISION_TIMER_SECONDS });
+    const current: PendingCompetitionMatch = {
+      id,
+      roundLabel: first.roundLabel,
+      opponent: first.opponent,
+      position: 'NEUTRAL',
+      matchState,
+      prompt,
+      timerSeconds: DECISION_TIMER_SECONDS,
+    };
+    const pc: PendingCompetitionState = {
+      kind,
+      week: s.week,
+      year: s.year,
+      phaseLabel,
+      eventType,
+      queue: { matches, index: 0 },
+      current,
+      completed: [],
+      finished: false,
+    };
+    s.pendingCompetition = pc;
+    addStory(s, `${phaseLabel}: Multiple matches this week. Play them one by one.`);
+  }
+
+  private bracketRoundLabel(phase: PendingBracketPhase): string {
+    switch (phase) {
+      case 'R16':
+        return 'R16';
+      case 'QF':
+        return 'Quarterfinal';
+      case 'SF':
+        return 'Semifinal';
+      case 'WB_FINAL':
+        return "Winner's Final";
+      case 'FINAL':
+        return 'Final';
+      case 'RESET':
+        return 'Bracket reset';
+      case 'LB_FINAL':
+        return 'LB Final';
+      case 'CONS_R1':
+        return 'Consolation R1';
+      case 'CONS_R2':
+        return 'Consolation R2';
+      case 'CONS_R3':
+        return 'Consolation R3';
+      case 'CONS_R4':
+        return 'Consolation R4';
+      case 'THIRD_FOURTH':
+        return '3rd/4th';
+      default:
+        return 'Match';
+    }
+  }
+
+  private advancePendingBracket(pc: PendingCompetitionState, won: boolean): void {
+    const b = pc.bracket;
+    if (!b) return;
+    if (b.phase === 'DONE') return;
+
+    const s = this.state;
+    const is16 = b.size === 16;
+    const consWins = (pc.completed ?? []).filter((m) => m.roundLabel.includes('Consolation')).length;
+
+    switch (b.phase) {
+      case 'R16':
+        b.phase = won ? 'QF' : 'CONS_R1';
+        break;
+      case 'QF':
+        b.phase = won ? 'SF' : 'CONS_R1';
+        break;
+      case 'CONS_R1':
+        if (!won) {
+          b.phase = 'DONE';
+          b.placement = this.rng.chance(0.5) ? (is16 ? 15 : 7) : (is16 ? 16 : 8);
+        } else {
+          b.phase = 'CONS_R2';
+        }
+        break;
+      case 'CONS_R2':
+        if (!won) {
+          b.phase = 'DONE';
+          b.placement = is16
+            ? (consWins === 1 ? (this.rng.chance(0.5) ? 13 : 14) : (this.rng.chance(0.5) ? 5 : 6))
+            : (this.rng.chance(0.5) ? 5 : 6);
+        } else {
+          b.phase = is16 ? 'CONS_R3' : 'THIRD_FOURTH';
+        }
+        break;
+      case 'CONS_R3':
+        if (!won) {
+          b.phase = 'DONE';
+          b.placement = this.rng.chance(0.5) ? 11 : 12;
+        } else {
+          b.phase = 'CONS_R4';
+        }
+        break;
+      case 'CONS_R4':
+        if (!won) {
+          b.phase = 'DONE';
+          b.placement = this.rng.chance(0.5) ? 9 : 10;
+        } else {
+          b.phase = 'THIRD_FOURTH';
+        }
+        break;
+      case 'THIRD_FOURTH':
+        b.phase = 'DONE';
+        b.placement = won ? 3 : 4;
+        break;
+      case 'SF':
+        b.phase = won ? 'WB_FINAL' : (is16 ? 'CONS_R2' : 'CONS_R2');
+        break;
+      case 'WB_FINAL':
+        b.phase = won ? 'FINAL' : 'LB_FINAL';
+        break;
+      case 'LB_FINAL':
+        if (!won) {
+          b.phase = 'DONE';
+          b.placement = 2;
+        } else {
+          b.phase = 'RESET';
+        }
+        break;
+      case 'FINAL':
+        b.phase = won ? 'DONE' : 'RESET';
+        if (won) b.placement = 1;
+        break;
+      case 'RESET':
+        b.phase = 'DONE';
+        b.placement = won ? 1 : 2;
+        break;
+      default:
+        break;
+    }
+
+    if (b.phase === 'DONE') {
+      pc.finished = true;
+      pc.placement = b.placement;
+      this.finalizePendingCompetition(pc);
+      s.pendingCompetition = null;
+      return;
+    }
+
+    // Set up next match in bracket
+    const nextOpp = b.opponents[b.opponentIndex++] ?? { id: 'pad', name: 'Opponent', overallRating: 70, style: 'grinder', clutch: 50 };
+    const my = this.toMinigameWrestlerFromPlayer();
+    const oppW = this.toMinigameWrestlerFromOpponent(nextOpp);
+    const matchState = createInitialMinigameState(my, oppW, 'NEUTRAL');
+    const prompt = generateExchangePrompt(matchState, { timerSeconds: DECISION_TIMER_SECONDS });
+    pc.current = {
+      id: `comp_${pc.kind}_${pc.year}_${pc.week}_${this.rng.next()}`,
+      roundLabel: this.bracketRoundLabel(b.phase),
+      opponent: nextOpp,
+      position: 'NEUTRAL',
+      matchState,
+      prompt,
+      timerSeconds: DECISION_TIMER_SECONDS,
+    };
+    s.pendingCompetition = pc;
+  }
+
+  private advancePendingQueue(pc: PendingCompetitionState): void {
+    const q = pc.queue;
+    if (!q) return;
+    q.index++;
+    if (q.index >= q.matches.length) {
+      pc.finished = true;
+      this.finalizePendingCompetition(pc);
+      this.state.pendingCompetition = null;
+      return;
+    }
+    const next = q.matches[q.index]!;
+    const my = this.toMinigameWrestlerFromPlayer();
+    const oppW = this.toMinigameWrestlerFromOpponent(next.opponent);
+    const matchState = createInitialMinigameState(my, oppW, 'NEUTRAL');
+    const prompt = generateExchangePrompt(matchState, { timerSeconds: DECISION_TIMER_SECONDS });
+    pc.current = {
+      id: `comp_${pc.kind}_${pc.year}_${pc.week}_${this.rng.next()}`,
+      roundLabel: next.roundLabel,
+      opponent: next.opponent,
+      position: 'NEUTRAL',
+      matchState,
+      prompt,
+      timerSeconds: DECISION_TIMER_SECONDS,
+    };
+  }
+
+  private finalizePendingCompetition(pc: PendingCompetitionState): void {
+    const s = this.state;
+    const wins = (pc.completed ?? []).filter((m) => m.won).length;
+    const losses = (pc.completed ?? []).length - wins;
+
+    const summary: WeekSummary = {
+      week: pc.week,
+      year: pc.year,
+      phase: pc.phaseLabel,
+      eventType: pc.eventType,
+      message: [],
+    };
+
+    // Postseason bracket logic (district/state are 16-man; placement 1–16)
+    if (pc.kind === 'district') {
+      const place = pc.placement ?? (pc.completed.length > 0 && pc.completed[pc.completed.length - 1]!.won ? 1 : 2);
+      s.stateQualified = place <= DISTRICTS_QUALIFY_TOP;
+      summary.eventType = 'district';
+      summary.placement = place;
+      summary.message.push(s.stateQualified ? `Districts: placed ${place}, qualified for state!` : `Districts: placed ${place}. Top ${DISTRICTS_QUALIFY_TOP} qualify.`);
+    } else if (pc.kind === 'state') {
+      const place = pc.placement ?? (pc.completed.length > 0 && pc.completed[pc.completed.length - 1]!.won ? 1 : 2);
+      s.stats.stateAppearances++;
+      s.stats.hsRecord.stateAppearances++;
+      s.stats.statePlacements.push(place);
+      summary.eventType = 'state';
+      summary.placement = place;
+      if (place === 1) {
+        s.stats.stateTitles++;
+        s.stats.hsRecord.stateTitles++;
+        s.accolades.push('State Champion (Year ' + s.year + ')');
+        summary.message.push('STATE CHAMPION!');
+      } else if (place === 2) {
+        summary.message.push('State: 2nd place.');
+      } else {
+        summary.message.push(`State: placed ${place}.`);
+      }
+      s.stateQualified = false;
+    } else if (pc.kind === 'ncaa') {
+      const m = pc.completed[pc.completed.length - 1]!;
+      const place = m.won ? 1 : 2;
+      s.stats.ncaaAppearances++;
+      s.stats.collegeRecord.ncaaAppearances++;
+      s.stats.ncaaPlacements.push(place);
+      summary.eventType = 'state';
+      summary.placement = place;
+      if (place === 1) {
+        s.stats.ncaaTitles++;
+        s.stats.collegeRecord.ncaaTitles++;
+        s.accolades.push('NCAA Champion (Year ' + s.year + ')');
+        s.money = (s.money ?? 0) + 150_000;
+        summary.message.push('NCAA CHAMPION! $150,000 bonus.');
+      } else {
+        s.stats.ncaaAllAmerican++;
+        s.stats.collegeRecord.ncaaAllAmerican++;
+        summary.message.push('NCAA finals: 2nd, All-American.');
+      }
+      s.ncaaQualified = false;
+    }
+
+    // Offseason event rewards/placement logging
+    if (pc.kind === 'offseason' && pc.offseasonEventKey) {
+      const key = pc.offseasonEventKey;
+      const place = pc.placement ?? (pc.completed[pc.completed.length - 1]?.won ? 1 : 2);
+      const isBracketEvent = key !== 'wno';
+      const isDnp = isBracketEvent && wins <= 1;
+
+      if (!isDnp) {
+        if (key === 'fargo') {
+          s.stats.fargoPlacements = s.stats.fargoPlacements ?? [];
+          s.stats.fargoPlacements.push(place);
+          if (place <= 2) s.accolades.push('Fargo ' + (place === 1 ? 'Champ' : 'Runner-up') + ' (Year ' + s.year + ')');
+        } else if (key === 'super32') {
+          s.stats.super32Placements = s.stats.super32Placements ?? [];
+          s.stats.super32Placements.push(place);
+          if (place <= 2) s.accolades.push('Super 32 ' + (place === 1 ? 'Champ' : 'Runner-up') + ' (Year ' + s.year + ')');
+        } else if (key === 'us_open') {
+          s.stats.usOpenPlacements = s.stats.usOpenPlacements ?? [];
+          s.stats.usOpenPlacements.push(place);
+          if (place <= 2) {
+            s.qualifiedForWorldChampionshipThisYear = true;
+            addStory(s, 'You qualified for the World Championship!');
+            s.accolades.push('US Open ' + (place === 1 ? 'Champ' : 'Runner-up') + ' (Year ' + s.year + ')');
+          }
+        } else if (key === 'world_championship') {
+          s.stats.worldChampionshipPlacements = s.stats.worldChampionshipPlacements ?? [];
+          s.stats.worldChampionshipPlacements.push(place);
+          if (place <= 2) s.accolades.push('World ' + (place === 1 ? 'Champion' : 'Runner-up') + ' (Year ' + s.year + ')');
+        } else if (key === 'wno') {
+          s.stats.wnoAppearances = (s.stats.wnoAppearances ?? 0) + 1;
+          if (place === 1) {
+            s.stats.wnoWins = (s.stats.wnoWins ?? 0) + 1;
+            s.accolades.push('WNO Champion (Year ' + s.year + ')');
+            s.overallRating = Math.min(99, (s.overallRating ?? 50) + 5);
+          }
+        }
+      } else {
+        // DNP: do not record placement in arrays; hide placement in summary
+        pc.placement = undefined;
+      }
+    }
+
+    if (pc.kind === 'dual') {
+      summary.eventType = 'dual';
+      summary.matches = (pc.completed ?? []).map((m) => ({
+        opponentName: pc.completed.length > 1 ? `${m.opponentName} (${m.roundLabel})` : m.opponentName,
+        opponentOverall: m.opponentOverall,
+        won: m.won,
+        method: m.method,
+      }));
+      summary.recordChange = { wins, losses };
+      if (pc.completed.length === 1) {
+        const m = pc.completed[0]!;
+        summary.message.push(`${m.won ? 'W' : 'L'} vs ${m.opponentName} (${m.opponentOverall}) — ${m.method}.`);
+      } else {
+        summary.message.push(`${pc.phaseLabel}: ${wins}-${losses} in duals this week.`);
+      }
+    } else {
+      // Tournament-style (including offseason brackets)
+      summary.eventType = pc.eventType ?? 'tournament';
+      summary.matches = (pc.completed ?? []).map((m) => ({
+        opponentName: `${m.opponentName} (${m.roundLabel})`,
+        opponentOverall: m.opponentOverall,
+        won: m.won,
+        method: m.method,
+      }));
+      summary.recordChange = { wins, losses };
+      if (pc.placement != null) summary.placement = pc.placement;
+      if (pc.kind !== 'district' && pc.kind !== 'state' && pc.kind !== 'ncaa') {
+        summary.message.push(`${pc.phaseLabel}: ${wins}-${losses}.${pc.placement != null ? ` Placed ${pc.placement}.` : ''}`);
+      }
+    }
+
+    // Detailed exchange logs (3 per match)
+    for (const m of pc.completed ?? []) {
+      summary.message.push(`${m.won ? 'W' : 'L'} ${m.roundLabel}: vs ${m.opponentName} (${Math.round(m.opponentOverall)}) — ${m.method} (${m.myScore}-${m.oppScore})`);
+      for (const ex of m.exchangeLog ?? []) {
+        const injB = Math.round((ex.myInjuryBefore ?? 0) * 100);
+        const injA = Math.round((ex.myInjuryAfter ?? 0) * 100);
+        const timed = ex.timedOut ? ' (TIMER EXPIRED)' : '';
+        const timerFail = ex.timerFailureScored ? ' TIMER FAILURE: gave up points.' : '';
+        summary.message.push(
+          `P${ex.period} ${ex.position}: ${ex.actionLabel}${timed} — ${ex.success ? 'SUCCESS' : 'FAIL'} (${ex.pointsFor}-${ex.pointsAgainst}) Energy ${Math.round(ex.myEnergyBefore)}→${Math.round(ex.myEnergyAfter)} Injury ${injB}→${injA}%${timerFail}`
+        );
+      }
+    }
+
+    s.lastWeekSummary = summary;
+    addStory(s, summary.message[0] ?? pc.phaseLabel);
+
+    // Conference qualification (after bracket completion)
+    if (isInCollege(s) && /conference/i.test(pc.phaseLabel) && pc.placement != null) {
+      const dnp = wins <= 1;
+      s.ncaaQualified = !dnp && pc.placement <= CONFERENCE_QUALIFY_TOP;
+      if (s.ncaaQualified) {
+        summary.message.push('Qualified for NCAA Championships!');
+        addStory(s, 'Qualified for NCAA Championships!');
+      }
+    }
+
+    // Recruiting updates after HS competition weeks
+    if (HS_LEAGUES.includes(s.league)) {
+      this.computeRecruitingScore();
+    }
   }
 
   /** True if player is in college (not HS) and has eligibility left. */
@@ -909,10 +1862,66 @@ export class UnifiedEngine {
     const s = this.state;
     if (!this.canEnterTransferPortal()) return false;
     s.transferPortalActive = true;
-    this.generateTransferOffers();
-    addStory(s, 'You entered the transfer portal. Other schools can contact you; pick a new school or withdraw.');
+    s.transferOffers = [];
+    addStory(s, 'You entered the transfer portal. Request interest from schools; they may or may not offer.');
     this.saveRng();
     return true;
+  }
+
+  /** Request a transfer offer from a specific school (same idea as requestCollegeOffer). Returns offer or clear reason. */
+  requestTransferOffer(schoolId: string): { success: boolean; message: string } {
+    const s = this.state;
+    if (!s.transferPortalActive) return { success: false, message: 'Not in the transfer portal.' };
+    const existing = (s.transferOffers ?? []).find((o: CollegeOffer) => o.schoolId === schoolId);
+    if (existing) return { success: false, message: 'You already have an offer from this school.' };
+    const currentName = (s.collegeName ?? '').toLowerCase();
+    const sc = SCHOOLS.find((x) => x.id === schoolId);
+    if (!sc) return { success: false, message: 'School not found.' };
+    if (sc.name.toLowerCase() === currentName) return { success: false, message: "That's your current school." };
+    const wc = s.weightClass ?? 145;
+    const collegeWc = this.collegeWeightForNeed(wc);
+    const need = sc.needsByWeight[collegeWc] ?? sc.needsByWeight[wc] ?? 0;
+    const rating = s.overallRating ?? 60;
+    if (need < 1) return { success: false, message: `${sc.name}: Set at your weight.` };
+    const tier = this.getProgramTier(sc.id);
+    const cfg = RECRUITING_TIER_CFG[tier];
+    const minRatingByTier: Record<ProgramTier, number> = { A: 72, B: 62, C: 52, D: 42 };
+    const minRating = minRatingByTier[tier];
+    if (rating < minRating && this.rng.float() < 0.75) return { success: false, message: `${sc.name}: Not interested at this time.` };
+    const needNorm = Math.min(1, need / 5);
+    const ratingNorm = (rating - 50) / 50;
+    const chance = clamp(0.15, 0.85, cfg.baseChance * 0.9 + needNorm * 0.2 + ratingNorm * 0.25);
+    if (this.rng.float() > chance) return { success: false, message: `${sc.name}: Passed for now.` };
+    const offer = this.buildTransferOffer(sc, collegeWc, rating, s.week ?? 1, s.year ?? 1);
+    if (!Array.isArray(s.transferOffers)) s.transferOffers = [];
+    s.transferOffers.push(offer);
+    this.saveRng();
+    return { success: true, message: `${sc.name} sent you a transfer offer.` };
+  }
+
+  private buildTransferOffer(sc: School, collegeWc: number, rating: number, week: number, year: number): CollegeOffer {
+    const s = this.state;
+    const need = sc.needsByWeight[collegeWc] ?? 3;
+    const needNorm = Math.min(1, need / 5);
+    const ratingNorm = (rating - 50) / 50;
+    const recNorm = (s.recruitingScore ?? 50) / 100;
+    const tuitionPct = clamp(25, 95, 30 + Math.floor((needNorm * 30 + recNorm * 25 + ratingNorm * 15) * (0.9 + this.rng.float() * 0.2)));
+    const nilTier = this.getNILTierForPlayer(true);
+    const nilAnnual = this.rollNILForOffer(nilTier, sc.division, sc.id);
+    return {
+      id: `transfer_${sc.id}_${year}_${week}_req`,
+      schoolId: sc.id,
+      schoolName: sc.name,
+      division: sc.division as LeagueKey,
+      offerType: tuitionPct >= 80 ? 'full' : tuitionPct >= 25 ? 'partial' : 'preferred_walkon',
+      tuitionCoveredPct: tuitionPct,
+      nilAnnual,
+      housingStipend: sc.division === 'D1' ? this.rng.int(400, 2200) : sc.division === 'D2' ? this.rng.int(200, 1200) : this.rng.int(0, 800),
+      mealPlanPct: this.rng.int(10, 50),
+      guaranteedStarter: this.rng.float() < 0.5,
+      deadlineWeek: week + 4,
+      offeredAtWeek: week,
+    };
   }
 
   private generateTransferOffers(): void {
@@ -935,22 +1944,20 @@ export class UnifiedEngine {
     const offers: CollegeOffer[] = [];
     const week = s.week ?? 1;
     const year = s.year ?? 1;
-    // Higher NIL caps and floor so transfer offers are more substantial
-    const nilCaps: Record<string, number> = { D1: 14000, D2: 7000, D3: 3500, NAIA: 4000, JUCO: 3000 };
+    const nilTier = this.getNILTierForPlayer(true);
     for (const sc of pool) {
       const need = needAt(sc) || 3;
       const needNorm = Math.min(1, need / 5);
       const recNorm = (s.recruitingScore ?? 50) / 100;
       const ratingNorm = (rating - 50) / 50;
       const tuitionPct = clamp(25, 95, 30 + Math.floor((needNorm * 30 + recNorm * 35 + ratingNorm * 10) * (0.95 + this.rng.float() * 0.15)));
-      const nilCap = nilCaps[sc.division] ?? 3000;
-      const nilFloor = Math.floor(nilCap * 0.2);
-      const nilAnnual = this.rng.int(nilFloor, Math.min(nilCap, Math.max(nilFloor, Math.floor((sc.scholarshipBudget ?? 0) / 45))));
+      const nilAnnual = this.rollNILForOffer(nilTier, sc.division, sc.id);
       offers.push({
         id: `transfer_${sc.id}_${year}_${week}`,
         schoolId: sc.id,
         schoolName: sc.name,
         division: sc.division as LeagueKey,
+        offerType: 'full' as OfferType,
         tuitionCoveredPct: tuitionPct,
         nilAnnual,
         housingStipend: sc.division === 'D1' ? this.rng.int(400, 2200) : sc.division === 'D2' ? this.rng.int(200, 1200) : this.rng.int(0, 800),
@@ -975,24 +1982,40 @@ export class UnifiedEngine {
     if (idx < 0 || !request.moreTuition && !request.moreNIL) return { success: false, message: 'No offer or invalid request.', kind };
     const school = SCHOOLS.find((sc) => sc.id === schoolId);
     if (!school) return { success: false, message: 'School not found.', kind };
+    const attempts = s.negotiationAttempts?.[schoolId] ?? { tuition: 0, nil: 0 };
+    const used = kind === 'tuition' ? attempts.tuition : attempts.nil;
+    if (used >= 2) {
+      this.saveRng();
+      return { success: false, message: kind === 'tuition' ? "They've reached their limit on scholarship." : "They've reached their limit on NIL.", kind };
+    }
+    const offer = offers[idx] as CollegeOffer;
+    if (request.moreTuition && offer.tuitionCoveredPct >= 100) return { success: false, message: 'Already full scholarship.', kind };
     const need = school.needsByWeight[this.collegeWeightForNeed(s.weightClass ?? 145)] ?? school.needsByWeight[s.weightClass ?? 145] ?? 3;
-    const recNorm = (s.recruitingScore ?? 50) / 100;
     const ratingNorm = ((s.overallRating ?? 60) - 50) / 50;
-    const chance = clamp(0.35, 0.85, 0.4 + recNorm * 0.3 + (need / 5) * 0.2 + school.coachAggressiveness * 0.1 + ratingNorm * 0.1);
+    const baseChance = clamp(0.3, 0.75, 0.4 + (need / 5) * 0.2 + school.coachAggressiveness * 0.1 + ratingNorm * 0.2);
+    const chance = baseChance * Math.pow(0.4, used);
     if (this.rng.float() >= chance) {
       this.saveRng();
       return { success: false, message: "They didn't budge.", kind };
     }
-    const offer = offers[idx] as CollegeOffer;
     const updated = { ...offer };
     if (request.moreTuition && offer.tuitionCoveredPct < 100) {
-      updated.tuitionCoveredPct = Math.min(100, offer.tuitionCoveredPct + 5 + this.rng.next() % 8);
+      const room = 100 - offer.tuitionCoveredPct;
+      const bump = room <= 10 ? this.rng.int(1, 3) : room <= 25 ? this.rng.int(3, 7) : this.rng.int(5, 11);
+      updated.tuitionCoveredPct = Math.min(100, offer.tuitionCoveredPct + bump);
     }
     if (request.moreNIL) {
-      const cap = school.division === 'D1' ? 18000 : school.division === 'D2' ? 10000 : school.division === 'NAIA' ? 6000 : 4500;
-      updated.nilAnnual = Math.min(cap, offer.nilAnnual + 600 + this.rng.next() % 1200);
+      const tier = this.getNILTierForPlayer(true);
+      const cap = this.getNILMaxForTier(tier, school.division, school.id);
+      const room = cap - offer.nilAnnual;
+      const bump = room <= 5000 ? this.rng.int(500, 2000) : room <= 20000 ? this.rng.int(2000, 8000) : this.rng.int(3000, 14_000);
+      updated.nilAnnual = Math.min(cap, offer.nilAnnual + bump);
     }
     (s.transferOffers as CollegeOffer[])[idx] = updated;
+    if (!s.negotiationAttempts) s.negotiationAttempts = {};
+    if (!s.negotiationAttempts[schoolId]) s.negotiationAttempts[schoolId] = { tuition: 0, nil: 0 };
+    if (request.moreTuition) s.negotiationAttempts[schoolId].tuition++;
+    if (request.moreNIL) s.negotiationAttempts[schoolId].nil++;
     this.saveRng();
     return { success: true, message: 'They increased the offer.', kind };
   }
@@ -1007,6 +2030,7 @@ export class UnifiedEngine {
     const prevName = s.collegeName;
     s.collegeName = school.name;
     s.league = offer.division;
+    s.nilAnnual = offer.nilAnnual ?? 0;
     s.transferPortalActive = false;
     s.transferOffers = [];
     s.collegeSchedule = this.generateCollegeSchedule();
@@ -1035,6 +2059,7 @@ export class UnifiedEngine {
     if (!school) return false;
     s.collegeName = school.name;
     s.league = offer.division;
+    s.nilAnnual = offer.nilAnnual ?? 0;
     s.pendingCollegeChoice = false;
     s.offers = [];
     s.fromHS = true;
@@ -1066,23 +2091,40 @@ export class UnifiedEngine {
     if (idx < 0 || !request.moreTuition && !request.moreNIL) return { success: false, message: 'No offer or invalid request.', kind };
     const school = SCHOOLS.find((sc) => sc.id === schoolId);
     if (!school) return { success: false, message: 'School not found.', kind };
+    const attempts = s.negotiationAttempts?.[schoolId] ?? { tuition: 0, nil: 0 };
+    const used = kind === 'tuition' ? attempts.tuition : attempts.nil;
+    if (used >= 2) {
+      this.saveRng();
+      return { success: false, message: kind === 'tuition' ? "They've reached their limit on scholarship." : "They've reached their limit on NIL.", kind };
+    }
+    const offer = offers[idx] as CollegeOffer;
+    if (request.moreTuition && offer.tuitionCoveredPct >= 100) return { success: false, message: 'Already full scholarship.', kind };
     const need = school.needsByWeight[this.collegeWeightForNeed(s.weightClass ?? 145)] ?? 3;
     const recNorm = (s.recruitingScore ?? 50) / 100;
-    const chance = clamp(0.2, 0.75, 0.3 + recNorm * 0.35 + (need / 5) * 0.2 + school.coachAggressiveness * 0.1);
+    const baseChance = clamp(0.25, 0.7, 0.35 + recNorm * 0.3 + (need / 5) * 0.15 + school.coachAggressiveness * 0.1);
+    const chance = baseChance * Math.pow(0.4, used);
     if (this.rng.float() >= chance) {
       this.saveRng();
       return { success: false, message: "They didn't budge.", kind };
     }
-    const offer = offers[idx] as CollegeOffer;
     const updated = { ...offer };
     if (request.moreTuition && offer.tuitionCoveredPct < 100) {
-      updated.tuitionCoveredPct = Math.min(100, offer.tuitionCoveredPct + 5 + this.rng.next() % 6);
+      const room = 100 - offer.tuitionCoveredPct;
+      const bump = room <= 10 ? this.rng.int(1, 3) : room <= 25 ? this.rng.int(3, 7) : this.rng.int(5, 12);
+      updated.tuitionCoveredPct = Math.min(100, offer.tuitionCoveredPct + bump);
     }
     if (request.moreNIL) {
-      const cap = school.division === 'D1' ? 12000 : 5000;
-      updated.nilAnnual = Math.min(cap, offer.nilAnnual + 500 + this.rng.next() % 1000);
+      const tier = this.getNILTierForPlayer(false);
+      const cap = this.getNILMaxForTier(tier, school.division, school.id);
+      const room = cap - offer.nilAnnual;
+      const bump = room <= 5000 ? this.rng.int(500, 2000) : room <= 20000 ? this.rng.int(2000, 8000) : this.rng.int(3000, 14_000);
+      updated.nilAnnual = Math.min(cap, offer.nilAnnual + bump);
     }
     (s.offers as CollegeOffer[])[idx] = updated;
+    if (!s.negotiationAttempts) s.negotiationAttempts = {};
+    if (!s.negotiationAttempts[schoolId]) s.negotiationAttempts[schoolId] = { tuition: 0, nil: 0 };
+    if (request.moreTuition) s.negotiationAttempts[schoolId].tuition++;
+    if (request.moreNIL) s.negotiationAttempts[schoolId].nil++;
     this.saveRng();
     return { success: true, message: 'They increased the offer.', kind };
   }
@@ -1113,6 +2155,9 @@ export class UnifiedEngine {
       });
     }
     stateRanked.sort((a, b) => b.overallRating - a.overallRating);
+    if (stateRanked.length > 0 && stateRanked[0].overallRating < 90) {
+      stateRanked[0] = { ...stateRanked[0], overallRating: 90 };
+    }
     const nationalRanked: Opponent[] = [];
     for (let r = 1; r <= 20; r++) {
       nationalRanked.push({
@@ -1126,6 +2171,9 @@ export class UnifiedEngine {
       });
     }
     nationalRanked.sort((a, b) => b.overallRating - a.overallRating);
+    if (nationalRanked.length > 0 && nationalRanked[0].overallRating < 90) {
+      nationalRanked[0] = { ...nationalRanked[0], overallRating: 90 };
+    }
     return { unranked, stateRanked, nationalRanked };
   }
 
@@ -1157,30 +2205,11 @@ export class UnifiedEngine {
   }
 
   private generateCollegeSchedule(): CollegeScheduleEntry[] {
-    const mySchoolName = (this.state.collegeName ?? 'College').toLowerCase();
-    const opponents = SCHOOLS.filter((sc) => !sc.name.toLowerCase().includes(mySchoolName) && mySchoolName !== sc.name.toLowerCase()).map((sc) => sc.name);
-    const shuffle = (arr: string[]) => {
-      const out = [...arr];
-      for (let i = out.length - 1; i > 0; i--) {
-        const j = this.rng.next() % (i + 1);
-        [out[i], out[j]] = [out[j], out[i]];
-      }
-      return out;
-    };
-    const oppNames = shuffle(opponents.length >= 5 ? opponents : [...opponents, 'Central State', 'Eastern U', 'Western U', 'Northern U', 'Southern U'].slice(0, 7));
-    const tournamentNames = ['Midlands', 'Southern Scuffle', 'Cliff Keen', 'Beast of the East', 'Colonial'];
-    const entries: CollegeScheduleEntry[] = [
-      { week: 1, type: 'dual', opponentName: oppNames[0] },
-      { week: 2, type: 'dual', opponentName: oppNames[1] },
-      { week: 3, type: 'tournament', tournamentName: tournamentNames[this.rng.next() % tournamentNames.length] },
-      { week: 4, type: 'dual', opponentName: oppNames[2] },
-      { week: 5, type: 'dual', opponentName: oppNames[3] },
-      { week: 6, type: 'tournament', tournamentName: tournamentNames[this.rng.next() % tournamentNames.length] },
-      { week: 7, type: 'dual', opponentName: oppNames[4] },
-      { week: 8, type: 'conference' },
-      { week: 12, type: 'ncaa' },
-    ];
-    return entries;
+    const collegeName = this.state.collegeName ?? 'NC State';
+    const school = SCHOOLS.find((sc) => sc.name === collegeName);
+    const schoolId = school?.id ?? 'nc-state';
+    const coachAggressiveness = school?.coachAggressiveness ?? 0.7;
+    return generateSeasonSchedule(schoolId, coachAggressiveness, this.rng);
   }
 
   private generateCollegeRoster(): CollegeTeammate[] {
@@ -1222,6 +2251,19 @@ export class UnifiedEngine {
     return best.isPlayer;
   }
 
+  /** True if grades are high enough to be eligible to compete. */
+  private canWrestle(): boolean {
+    return (this.state.grades ?? 75) >= MIN_GRADES_TO_WRESTLE;
+  }
+
+  getCanWrestle(): boolean {
+    return this.canWrestle();
+  }
+
+  static getMinGradesToWrestle(): number {
+    return MIN_GRADES_TO_WRESTLE;
+  }
+
   private findOpponent(id: string): Opponent | null {
     const p = this.state.opponentPools;
     if (!p) return null;
@@ -1229,93 +2271,164 @@ export class UnifiedEngine {
     return all.find((o) => o.id === id) ?? null;
   }
 
+  /** Get the finals opponent from rankings at player's weight (the other top-2 wrestler). Returns null if rankings empty or only player. */
+  private getFinalsOpponentFromRankings(): Opponent | null {
+    const s = this.state;
+    this.getRankingsBoard(); // ensure rankings populated
+    const wc = s.weightClass ?? 145;
+    const list = s.rankingsByWeight?.[wc];
+    if (!list || list.length === 0) return null;
+    const withPlayer = [
+      ...list.filter((e) => e.id !== 'player'),
+      { id: 'player', name: s.name, overallRating: s.overallRating ?? 50, trueSkill: s.trueSkill ?? 50 },
+    ];
+    withPlayer.sort((a, b) => b.overallRating - a.overallRating);
+    const top2 = withPlayer.slice(0, 2);
+    const other = top2.find((e) => e.id !== 'player');
+    if (!other) return null;
+    return {
+      id: other.id,
+      name: other.name,
+      overallRating: other.overallRating,
+      style: 'grinder',
+      clutch: 50,
+    };
+  }
+
   private simOneMatch(opponent: Opponent, isRival: boolean): { won: boolean; method: string } {
     const s = this.state;
     const eff = getEffectiveModifiers(s);
-    let winChance = 0.45 + (s.overallRating ?? 50) / 120 - opponent.overallRating / 120;
-    winChance *= eff.performanceMult;
-    if (isRival) winChance += (this.rng.float() - 0.5) * 0.2;
-    winChance = clamp(0.05, 0.95, winChance);
-    const won = this.rng.float() < winChance;
-    const method = won ? (this.rng.float() < 0.3 ? 'Fall' : this.rng.float() < 0.5 ? 'Tech' : 'Dec') : 'Dec';
-    return { won, method };
+    const injurySeverity = Math.max(0, (100 - (s.health ?? 100)) / 100);
+    const composure = Math.max(0, 100 - (s.stress ?? 50));
+    const result = simEliteMatch(
+      {
+        baseA: s.overallRating ?? 50,
+        energyA: s.energy ?? 100,
+        injuryA: injurySeverity,
+        composureA: composure,
+        baseB: opponent.overallRating,
+        energyB: 80,
+        injuryB: 0,
+        composureB: 80,
+        performanceMult: eff.performanceMult,
+        isRival,
+      },
+      this.rng
+    );
+    if (result.upsetLogLine) addStory(s, (s.story || '') + '\n' + result.upsetLogLine);
+    return { won: result.won, method: result.method };
   }
 
   /**
-   * Run an 8-man double-elimination bracket from the player's POV.
-   * Winner's bracket: quarters → semis → final. One loss drops to consolation.
-   * Consolation: R1 (WB R1 losers), R2 (winners vs WB R2 losers), then 3rd/4th match, then 2nd/3rd (WB final loser vs conso champ).
-   * Returns placement (1–8) and all matches with round labels.
+   * Build bracket (8- or 16-person). Seed 1 = player; opponents pad to 7 or 15.
+   * getOpponent cycles through the opponent list by round.
    */
-  private runDoubleElimTournament(getOpponent: (round: string) => Opponent): { placement: number; matches: NonNullable<WeekSummary['matches']> } {
-    const matches: NonNullable<WeekSummary['matches']> = [];
-    const pushMatch = (opp: Opponent, roundLabel: string, won: boolean, method: string) => {
-      matches.push({
-        opponentName: `${opp.name} (${roundLabel})`,
-        opponentOverall: opp.overallRating,
-        stateRank: opp.stateRank,
-        nationalRank: opp.nationalRank,
-        won,
-        method,
-      });
+  private buildBracket(
+    playerName: string,
+    playerRating: number,
+    opponents: Opponent[],
+    size: 8 | 16 = 8
+  ): { participants: BracketParticipant[]; getOpponent: (round: string) => Opponent } {
+    const pad: Opponent = { id: 'bracket_pad', name: 'Opponent', overallRating: 70, style: 'grinder', clutch: 50 };
+    const need = size === 16 ? 15 : 7;
+    const list = [...opponents];
+    while (list.length < need) list.push(pad);
+    const slice = list.slice(0, need);
+    const participants: BracketParticipant[] = [
+      { seed: 1, name: playerName, overallRating: playerRating },
+      ...slice.map((o, i) => ({ seed: i + 2, name: o.name, overallRating: o.overallRating ?? 50 })),
+    ];
+    let roundIndex = 0;
+    const getOpponent = (_round: string): Opponent => {
+      const o = slice[roundIndex++ % need]!;
+      return { ...o, overallRating: o.overallRating ?? 50 };
     };
+    return { participants, getOpponent };
+  }
 
-    // Winner's bracket: R1 (quarters), R2 (semis), R3 (winner's final)
-    const wbR1Opp = getOpponent("Quarterfinal");
-    const wbR1 = this.simOneMatch(wbR1Opp, false);
-    pushMatch(wbR1Opp, 'Quarterfinal', wbR1.won, wbR1.method);
-    if (!wbR1.won) {
-      // Lost in quarters → conso R1 (wrestle another quarterfinal loser). Lose = 7th/8th, Win = conso R2
-      const consoR1Opp = getOpponent("Consolation R1");
-      const consoR1 = this.simOneMatch(consoR1Opp, false);
-      pushMatch(consoR1Opp, 'Consolation R1', consoR1.won, consoR1.method);
-      if (!consoR1.won) return { placement: this.rng.next() % 2 === 0 ? 7 : 8, matches };
-      // Conso R2
-      const consoR2Opp = getOpponent("Consolation R2");
-      const consoR2 = this.simOneMatch(consoR2Opp, false);
-      pushMatch(consoR2Opp, 'Consolation R2', consoR2.won, consoR2.method);
-      if (!consoR2.won) return { placement: this.rng.next() % 2 === 0 ? 5 : 6, matches };
-      // Conso semi (3rd/4th)
-      const consoSemiOpp = getOpponent("3rd/4th");
-      const consoSemi = this.simOneMatch(consoSemiOpp, false);
-      pushMatch(consoSemiOpp, '3rd/4th', consoSemi.won, consoSemi.method);
-      if (!consoSemi.won) return { placement: 4, matches };
-      // 2nd/3rd match (conso champ vs WB final loser — we're conso champ, opponent is WB final loser)
-      const secondThirdOpp = getOpponent("2nd/3rd");
-      const secondThird = this.simOneMatch(secondThirdOpp, false);
-      pushMatch(secondThirdOpp, '2nd/3rd', secondThird.won, secondThird.method);
-      return { placement: secondThird.won ? 2 : 3, matches };
+  /** Generate named opponents for brackets (no pool). Default 7; use count 15 for 16-man. */
+  private generateNamedBracketOpponents(
+    myRating: number,
+    options: { minRating?: number; maxRating?: number; prestige?: number; count?: number }
+  ): Opponent[] {
+    const first = ['Jake', 'Kyle', 'David', 'Ryan', 'Cole', 'Blake', 'Mason', 'Hunter', 'Chase', 'Tyler', 'Brody', 'Cade'];
+    const last = ['Smith', 'Johnson', 'Brown', 'Davis', 'Wilson', 'Moore', 'Taylor', 'Anderson', 'Thomas', 'Jackson', 'Martinez', 'Lee'];
+    const styles: Opponent['style'][] = ['grinder', 'scrambler', 'defensive'];
+    const min = options.minRating ?? 52;
+    const max = options.maxRating ?? 95;
+    const prestige = options.prestige ?? 1;
+    const count = options.count ?? 7;
+    const out: Opponent[] = [];
+    for (let i = 0; i < count; i++) {
+      const spread = i <= 1 ? this.rng.int(2, 10) : i <= (count >> 1) ? this.rng.int(-2, 8) : this.rng.int(-4, 6);
+      const rating = clamp(min, max, myRating + spread + (prestige - 1) * 4);
+      out.push({
+        id: `bracket_${i}`,
+        name: first[this.rng.next() % first.length] + ' ' + last[this.rng.next() % last.length],
+        overallRating: rating,
+        style: styles[this.rng.next() % 3],
+        clutch: this.rng.int(40, 85),
+      });
     }
+    out.sort((a, b) => b.overallRating - a.overallRating);
+    return out;
+  }
 
-    const wbR2Opp = getOpponent("Semifinal");
-    const wbR2 = this.simOneMatch(wbR2Opp, false);
-    pushMatch(wbR2Opp, 'Semifinal', wbR2.won, wbR2.method);
-    if (!wbR2.won) {
-      // Lost in semis → conso R2 (vs conso R1 winner)
-      const consoR2Opp = getOpponent("Consolation R2");
-      const consoR2 = this.simOneMatch(consoR2Opp, false);
-      pushMatch(consoR2Opp, 'Consolation R2', consoR2.won, consoR2.method);
-      if (!consoR2.won) return { placement: this.rng.next() % 2 === 0 ? 5 : 6, matches };
-      const consoSemiOpp = getOpponent("3rd/4th");
-      const consoSemi = this.simOneMatch(consoSemiOpp, false);
-      pushMatch(consoSemiOpp, '3rd/4th', consoSemi.won, consoSemi.method);
-      if (!consoSemi.won) return { placement: 4, matches };
-      const secondThirdOpp = getOpponent("2nd/3rd");
-      const secondThird = this.simOneMatch(secondThirdOpp, false);
-      pushMatch(secondThirdOpp, '2nd/3rd', secondThird.won, secondThird.method);
-      return { placement: secondThird.won ? 2 : 3, matches };
+  /** Convert unified Opponent to TournamentOpponent for bracket sim. */
+  private toTournamentOpponent(o: Opponent): TournamentOpponent {
+    return {
+      id: o.id,
+      name: o.name,
+      overallRating: o.overallRating,
+      style: o.style,
+      clutch: o.clutch,
+      stateRank: o.stateRank,
+      nationalRank: o.nationalRank,
+    };
+  }
+
+  /**
+   * Run double-elimination bracket (8- or 16-man): effective rating, matchup terms, energy/injury,
+   * WB/LB and bracket reset. Placement from elimination order; record = actual match W-L.
+   */
+  private runDoubleElimTournament(getOpponent: (round: string) => Opponent, bracketSize: 8 | 16 = 8): { placement: number; matches: NonNullable<WeekSummary['matches']> } {
+    const s = this.state;
+    const eff = getEffectiveModifiers(s);
+    const player: TournamentPlayerState = {
+      technique: s.technique ?? 50,
+      matIQ: s.matIQ ?? 50,
+      conditioning: s.conditioning ?? 50,
+      strength: s.strength ?? 50,
+      speed: s.speed ?? 50,
+      flexibility: s.flexibility ?? 50,
+      energy: s.energy ?? 100,
+      health: s.health ?? 100,
+      stress: s.stress ?? 50,
+      trueSkill: s.trueSkill ?? 50,
+      overallRating: s.overallRating ?? 50,
+      injurySeverity: 0,
+      performanceMult: eff.performanceMult,
+    };
+    const getTournamentOpp = (round: string): TournamentOpponent => this.toTournamentOpponent(getOpponent(round));
+    const result = runDoubleElimBracket(player, getTournamentOpp, this.rng, bracketSize);
+    const validation = validateBracketMatchSequence(result.matches);
+    if (!validation.valid && typeof console !== 'undefined' && console.warn) {
+      console.warn('[Tournament] Invalid bracket sequence:', validation.message);
     }
-
-    // Winner's final
-    const wbFinalOpp = getOpponent("Winner's Final");
-    const wbFinal = this.simOneMatch(wbFinalOpp, false);
-    pushMatch(wbFinalOpp, "Winner's Final", wbFinal.won, wbFinal.method);
-    if (wbFinal.won) return { placement: 1, matches };
-    // WB final loser → 2nd/3rd match vs conso champ
-    const secondThirdOpp = getOpponent("2nd/3rd");
-    const secondThird = this.simOneMatch(secondThirdOpp, false);
-    pushMatch(secondThirdOpp, '2nd/3rd', secondThird.won, secondThird.method);
-    return { placement: secondThird.won ? 2 : 3, matches };
+    s.energy = Math.max(0, player.energy);
+    if (player.injurySeverity > 0) {
+      const healthPenalty = Math.min(25, player.injurySeverity * 3);
+      s.health = Math.max(0, (s.health ?? 100) - healthPenalty);
+    }
+    const matches: NonNullable<WeekSummary['matches']> = result.matches.map((m: BracketMatchEntry) => ({
+      opponentName: `${m.opponentName} (${m.roundLabel})`,
+      opponentOverall: m.opponentOverall,
+      stateRank: m.stateRank,
+      nationalRank: m.nationalRank,
+      won: m.won,
+      method: m.method,
+    }));
+    return { placement: result.placement, matches };
   }
 
   private runHSWeekCompetition(): WeekSummary | null {
@@ -1326,6 +2439,13 @@ export class UnifiedEngine {
     if (!entry || entry.type === 'none') return null;
     const summary: WeekSummary = { week: s.week, year: s.year, phase: getHSPhase(s.week), message: [] };
     const recBefore = s.recruitingScore ?? 50;
+
+    if (!this.canWrestle()) {
+      summary.eventType = entry.type === 'tournament' ? 'tournament' : 'dual';
+      summary.message.push("Grades too low — you're ineligible. No competition this week.");
+      s.lastWeekSummary = summary;
+      return summary;
+    }
 
     if (entry.type === 'dual' || entry.type === 'rival') {
       if (s.league === 'HS_JV') {
@@ -1341,40 +2461,40 @@ export class UnifiedEngine {
         s.lastWeekSummary = summary;
         return summary;
       }
-      const { won, method } = this.simOneMatch(opponent, entry.type === 'rival');
-      if (won) {
-        s.stats.matchesWon++; s.stats.seasonWins++; s.stats.hsRecord.matchesWon++;
-        s.happiness = Math.min(100, (s.happiness ?? 75) + this.rng.int(2, 6));
-      } else {
-        s.stats.matchesLost++; s.stats.seasonLosses++; s.stats.hsRecord.matchesLost++;
-      }
-      summary.eventType = 'dual';
-      summary.matches = [{ opponentName: opponent.name, opponentOverall: opponent.overallRating, stateRank: opponent.stateRank, nationalRank: opponent.nationalRank, won, method }];
-      summary.recordChange = { wins: won ? 1 : 0, losses: won ? 0 : 1 };
-      summary.message.push(`${won ? 'W' : 'L'} vs ${opponent.name} (${opponent.overallRating})${opponent.stateRank ? ` #${opponent.stateRank} state` : ''}${opponent.nationalRank ? ` #${opponent.nationalRank} national` : ''} — ${method}.`);
+      this.startPendingSingleMatch('dual', getHSPhase(s.week), 'dual', opponent, entry.type === 'rival' ? 'Rival dual' : 'Dual');
+      this.saveRng();
+      return null;
     } else if (entry.type === 'tournament') {
       const pool = s.opponentPools;
-      const oppList = [...(pool?.unranked ?? []), ...(pool?.stateRanked ?? [])];
-      const listLen = Math.max(1, oppList.length);
-      const getOpponent = (round: string): Opponent => {
-        const base = oppList[this.rng.next() % listLen];
-        const bump = round === "Winner's Final" || round === 'Semifinal' ? this.rng.int(2, 8) : round === 'Quarterfinal' ? this.rng.int(0, 4) : this.rng.int(-2, 4);
-        const rating = clamp(40, 95, (base.overallRating ?? 50) + bump);
-        return { ...base, overallRating: rating };
-      };
-      const { placement: place, matches: bracketMatches } = this.runDoubleElimTournament(getOpponent);
-      const wins = bracketMatches.filter((m) => m.won).length;
-      const losses = bracketMatches.filter((m) => !m.won).length;
-      for (const m of bracketMatches) {
-        if (m.won) { s.stats.matchesWon++; s.stats.seasonWins++; s.stats.hsRecord.matchesWon++; }
-        else { s.stats.matchesLost++; s.stats.seasonLosses++; s.stats.hsRecord.matchesLost++; }
+      const rankedList = [...(pool?.stateRanked ?? []), ...(pool?.nationalRanked ?? [])]
+        .sort((a, b) => b.overallRating - a.overallRating);
+      let bracketOpponents: Opponent[] =
+        rankedList.length >= 7
+          ? rankedList.slice(0, 7)
+          : [...rankedList, ...(pool?.unranked ?? []).slice(0, Math.max(0, 7 - rankedList.length))];
+      if (bracketOpponents.length === 0) bracketOpponents = (pool?.unranked ?? []).slice(0, 7);
+      if (bracketOpponents.length === 0) {
+        bracketOpponents = [{ id: 'fallback', name: 'Opponent', overallRating: 70, style: 'grinder', clutch: 50 }];
       }
-      const placeStr = place === 1 ? '1st' : place === 2 ? '2nd' : place === 3 ? '3rd' : `${place}th`;
+      const myRating = s.overallRating ?? 50;
+      const { participants } = this.buildBracket(s.name, myRating, bracketOpponents);
+      s.pendingTournamentPlay = {
+        kind: 'tournament',
+        phaseLabel: getHSPhase(s.week),
+        eventType: 'tournament',
+        week: s.week,
+        year: s.year,
+        opponents: bracketOpponents,
+        bracketParticipants: participants,
+      };
       summary.eventType = 'tournament';
-      summary.matches = bracketMatches;
-      summary.placement = place;
-      summary.recordChange = { wins, losses };
-      summary.message.push(`Tournament (double elim): ${wins}-${losses}. Placed ${placeStr}.`);
+      summary.message.push('Tournament this week. Go to tournament to compete.');
+      summary.bracketParticipants = participants;
+      this.computeRecruitingScore();
+      summary.recruitingChange = (s.recruitingScore ?? 50) - recBefore;
+      s.lastWeekSummary = summary;
+      this.saveRng();
+      return summary;
     }
 
     this.computeRecruitingScore();
@@ -1385,10 +2505,31 @@ export class UnifiedEngine {
 
   private runCollegeWeekCompetition(): WeekSummary | null {
     const s = this.state;
-    if (!isInCollege(s) || !s.collegeSchedule || s.week < 1 || s.week > 7) return null;
+    if (!isInCollege(s) || !s.collegeSchedule || s.week < 1 || s.week > SEASON_WEEKS) return null;
     const entry = s.collegeSchedule.find((e) => e.week === s.week);
-    if (!entry || entry.type === 'conference' || entry.type === 'ncaa') return null;
-    const summary: WeekSummary = { week: s.week, year: s.year, phase: 'College season', message: [] };
+    if (!entry) return null;
+    if (entry.type === 'ncaa') return null;
+    const summary: WeekSummary = { week: s.week, year: s.year, phase: entry.phase ?? 'College season', message: [] };
+    if (entry.type === 'conference') {
+      return this.runConferenceTournamentWeek(summary, entry);
+    }
+    if (entry.type === 'none') {
+      summary.message.push('Recovery week — no competition.');
+      s.lastWeekSummary = summary;
+      return summary;
+    }
+    if (entry.isTravelWeek) {
+      s.energy = Math.max(0, (s.energy ?? 100) - this.rng.int(3, 8));
+      summary.energyChange = -this.rng.int(3, 8);
+      summary.message.push('Travel fatigue from the road trip.');
+    }
+
+    if (!this.canWrestle()) {
+      summary.eventType = entry.type === 'tournament' ? 'tournament' : 'dual';
+      summary.message.push("Academic ineligibility — grades too low. You didn't compete.");
+      s.lastWeekSummary = summary;
+      return summary;
+    }
 
     if (entry.type === 'dual') {
       if (!this.isStarterAtWeight()) {
@@ -1397,49 +2538,125 @@ export class UnifiedEngine {
         s.lastWeekSummary = summary;
         return summary;
       }
-      const oppRating = clamp(50, 88, (s.overallRating ?? 50) + this.rng.int(-8, 10));
-      const opponent: Opponent = { id: 'col_dual', name: entry.opponentName ?? 'Opponent', overallRating: oppRating, style: 'grinder', clutch: 50 };
-      const { won, method } = this.simOneMatch(opponent, false);
-      if (won) {
-        s.stats.matchesWon++; s.stats.seasonWins++; s.stats.collegeRecord.matchesWon++;
-      } else {
-        s.stats.matchesLost++; s.stats.seasonLosses++; s.stats.collegeRecord.matchesLost++;
+      const opponents = entry.opponentNames?.length ? entry.opponentNames : (entry.opponentName ? [entry.opponentName] : ['Opponent']);
+      const queueMatches: { opponent: Opponent; roundLabel: string }[] = [];
+      for (let i = 0; i < opponents.length; i++) {
+        const oppName = opponents[i];
+        const oppSchool = SCHOOLS.find((sc) => sc.name === oppName);
+        const isPowerhouseOpp = oppSchool ? isPowerhouse(oppSchool.id) : false;
+        const isConf = entry.isConference ?? false;
+        const ratingBump = (isPowerhouseOpp ? 4 : 0) + (isConf ? 2 : 0) + (entry.phase === 'conference_stretch' ? 2 : 0);
+        const oppRating = clamp(50, 92, (s.overallRating ?? 50) + this.rng.int(-8, 10) + ratingBump);
+        const opponent: Opponent = { id: `col_dual_${i}`, name: oppName, overallRating: oppRating, style: 'grinder', clutch: 50 };
+        queueMatches.push({ opponent, roundLabel: opponents.length > 1 ? `Dual ${i + 1}` : 'Dual' });
       }
-      summary.eventType = 'dual';
-      summary.matches = [{ opponentName: opponent.name, opponentOverall: opponent.overallRating, won, method }];
-      summary.recordChange = { wins: won ? 1 : 0, losses: won ? 0 : 1 };
-      summary.message.push(`${won ? 'W' : 'L'} vs ${opponent.name} (${opponent.overallRating}) — ${method}.`);
+      this.startPendingQueueCompetition('dual', entry.phase ?? 'College season', 'dual', queueMatches);
+      this.saveRng();
+      return null;
     } else if (entry.type === 'tournament') {
-      const myRating = s.overallRating ?? 50;
-      const getOpponent = (round: string): Opponent => {
-        const spread = round === "Winner's Final" ? this.rng.int(2, 10) : round === 'Semifinal' ? this.rng.int(-2, 8) : round === 'Quarterfinal' ? this.rng.int(-6, 6) : this.rng.int(-6, 4);
-        const rating = clamp(52, 92, myRating + spread);
-        return { id: `col_t_${round}`, name: 'Tournament opponent', overallRating: rating, style: 'grinder', clutch: 50 };
-      };
-      const { placement: place, matches: bracketMatches } = this.runDoubleElimTournament(getOpponent);
-      const wins = bracketMatches.filter((m) => m.won).length;
-      const losses = bracketMatches.filter((m) => !m.won).length;
-      for (const m of bracketMatches) {
-        if (m.won) { s.stats.matchesWon++; s.stats.seasonWins++; s.stats.collegeRecord.matchesWon++; }
-        else { s.stats.matchesLost++; s.stats.seasonLosses++; s.stats.collegeRecord.matchesLost++; }
+      const openNoStart = (entry.eventFormat === 'open' || entry.eventFormat === 'invite') && entry.starterParticipates === false;
+      if (openNoStart && this.isStarterAtWeight()) {
+        summary.eventType = 'tournament';
+        summary.message.push(`Coach sat the starters at ${entry.tournamentName ?? 'the open'} — recovery week for you.`);
+        s.lastWeekSummary = summary;
+        return summary;
       }
-      const placeStr = place === 1 ? '1st' : place === 2 ? '2nd' : place === 3 ? '3rd' : `${place}th`;
+      if (!this.isStarterAtWeight()) {
+        summary.eventType = 'tournament';
+        summary.message.push(`You didn't travel — backup at ${s.weightClass}.`);
+        s.lastWeekSummary = summary;
+        return summary;
+      }
+      const myRating = s.overallRating ?? 50;
+      const bigTournament = entry.eventFormat === 'big_tournament' || entry.eventFormat === 'invite';
+      const collegeOpponents = this.generateNamedBracketOpponents(myRating, {
+        minRating: 52,
+        maxRating: 95,
+        prestige: bigTournament ? 2 : 1,
+      });
+      const { participants } = this.buildBracket(s.name, myRating, collegeOpponents);
+      s.pendingTournamentPlay = {
+        kind: 'tournament',
+        phaseLabel: entry.tournamentName ?? 'Tournament',
+        eventType: 'tournament',
+        week: s.week,
+        year: s.year,
+        opponents: collegeOpponents,
+        bracketParticipants: participants,
+      };
       summary.eventType = 'tournament';
-      summary.matches = bracketMatches;
-      summary.placement = place;
-      summary.recordChange = { wins, losses };
-      summary.message.push(`${entry.tournamentName ?? 'Tournament'} (double elim): ${wins}-${losses}, placed ${placeStr}.`);
+      summary.message.push('Tournament this week. Go to tournament to compete.');
+      summary.bracketParticipants = participants;
+      s.lastWeekSummary = summary;
+      this.saveRng();
+      return summary;
     }
     s.lastWeekSummary = summary;
     return summary;
   }
 
-  advanceWeek(): boolean {
+  private runConferenceTournamentWeek(summary: WeekSummary, entry: CollegeScheduleEntry): WeekSummary | null {
     const s = this.state;
-    if (s.pendingCollegeChoice) return false;
-    // Decay grades/conditioning if player didn't study or train this week (rest/rehab do not reduce conditioning)
+    if (entry.isTravelWeek) {
+      s.energy = Math.max(0, (s.energy ?? 100) - this.rng.int(3, 8));
+      summary.energyChange = -this.rng.int(3, 8);
+      summary.message.push('Travel fatigue from the conference trip.');
+    }
+    if (!this.canWrestle()) {
+      summary.eventType = 'tournament';
+      summary.message.push("Academic ineligibility — you didn't compete at Conference.");
+      s.lastWeekSummary = summary;
+      return summary;
+    }
+    if (!this.isStarterAtWeight()) {
+      summary.eventType = 'tournament';
+      summary.message.push(`You didn't compete at Conference — backup at ${s.weightClass}.`);
+      s.lastWeekSummary = summary;
+      return summary;
+    }
+    const myRating = s.overallRating ?? 50;
+    const confOpponents = this.generateNamedBracketOpponents(myRating, { minRating: 55, maxRating: 95, prestige: 2 });
+    const { participants } = this.buildBracket(s.name, myRating, confOpponents);
+    s.pendingTournamentPlay = {
+      kind: 'tournament',
+      phaseLabel: entry.tournamentName ?? 'Conference Championship',
+      eventType: 'tournament',
+      week: s.week,
+      year: s.year,
+      opponents: confOpponents,
+      bracketParticipants: participants,
+      conferenceQualifyTop: CONFERENCE_QUALIFY_TOP,
+    };
+    summary.eventType = 'tournament';
+    summary.message.push('Conference Championship this week. Go to tournament to compete.');
+    summary.bracketParticipants = participants;
+    s.lastWeekSummary = summary;
+    this.saveRng();
+    return summary;
+  }
+
+  /** Picks the training choice that improves the attribute they need most (lowest of technique, conditioning, strength). */
+  private pickBestAutoTrainChoice(): 'train_technique' | 'train_conditioning' | 'train_strength' {
+    const s = this.state;
+    const t = s.technique ?? 50;
+    const c = s.conditioning ?? 50;
+    const st = s.strength ?? 50;
+    const min = Math.min(t, c, st);
+    if (c === min) return 'train_conditioning';
+    if (t === min) return 'train_technique';
+    return 'train_strength';
+  }
+
+  advanceWeek(opts?: { skipAutoTrain?: boolean }): boolean {
+    const s = this.state;
+    if (s.pendingCollegeChoice || s.pendingCollegeGraduation || s.careerEnded || s.pendingCompetition) return false;
+    // Decay grades if player didn't study this week
     if (!s.studiedThisWeek) s.grades = Math.max(0, (s.grades ?? 75) - 1);
-    if (!s.trainedThisWeek && !s.didRestOrRehabThisWeek) s.conditioning = Math.max(0, (s.conditioning ?? 50) - 1);
+    // Conditioning: only decay after 2+ weeks with no training (rest/rehab do not count as training but also don't trigger decay)
+    if (!s.trainedThisWeek) s.weeksWithoutTraining = (s.weeksWithoutTraining ?? 0) + 1;
+    else s.weeksWithoutTraining = 0;
+    // Conditioning drops every 2 weeks without training (reduced from every week)
+    if ((s.weeksWithoutTraining ?? 0) >= 2 && (s.weeksWithoutTraining ?? 0) % 2 === 0 && !s.didRestOrRehabThisWeek) s.conditioning = Math.max(0, (s.conditioning ?? 50) - 1);
     s.studiedThisWeek = false;
     s.trainedThisWeek = false;
     s.didRestOrRehabThisWeek = false;
@@ -1451,6 +2668,12 @@ export class UnifiedEngine {
     const availableAfterBase = HOURS_PER_WEEK - BASE_HOURS_AUTO;
     s.hoursLeftThisWeek = availableAfterBase;
     s.energy = Math.min(100, (s.energy ?? 100) + 6);
+    // Auto-train: single-week advance always; multi-week only when toggle is on. Train what they need most.
+    if (!opts?.skipAutoTrain) {
+      const hours = s.hoursLeftThisWeek ?? HOURS_PER_WEEK;
+      const energy = s.energy ?? 100;
+      if (hours >= 10 && energy >= 20) this.applyChoice(this.pickBestAutoTrainChoice());
+    }
     if (s.fromHS && s.weeksInCollege < 52 * 4) s.weeksInCollege++;
     if (s.relationship) {
       s.relationship.level = Math.max(0, (s.relationship.level ?? 50) - 2);
@@ -1471,13 +2694,33 @@ export class UnifiedEngine {
     }
     const didPartTime = s.didPartTimeThisWeek;
     s.didPartTimeThisWeek = false;
-    const income = isInCollege(s) ? 0 : 20;
+    // NIL pay every week when in college (nilAnnual/52); HS gets small allowance.
+    const nilWeekly = isInCollege(s) ? Math.round((s.nilAnnual ?? 0) / 52) : 0;
+    const income = isInCollege(s) ? nilWeekly : 20;
     const partIncome = didPartTime ? this.rng.int(200, 450) : 0;
-    const baseExpenses = isInCollege(s) ? Math.round((450 + 280 + 80 + 2200 + 120) / 4) : (this.rng.float() < 0.5 ? 10 : 0);
+    // College: higher base (rent/food/books/fees/travel/personal). HS: minimal.
+    const baseExpenses = isInCollege(s)
+      ? Math.round(850 + this.rng.int(0, 350))
+      : (this.rng.float() < 0.5 ? 10 : 0);
     const lifestyleCost = this.getLifestyleWeeklyCost();
     const expenses = baseExpenses + lifestyleCost;
     s.money = Math.max(0, (s.money ?? 0) + income + partIncome - expenses);
-    s.lastWeekEconomy = { expenses: { total: expenses, lifestyle: lifestyleCost }, income: { total: income + partIncome }, net: income + partIncome - expenses, balance: s.money };
+    s.lastWeekEconomy = {
+      expenses: { total: expenses, lifestyle: lifestyleCost },
+      income: {
+        total: income + partIncome,
+        ...(nilWeekly > 0 && { nil: nilWeekly }),
+        ...(partIncome > 0 && { partTime: partIncome }),
+      },
+      net: income + partIncome - expenses,
+      balance: s.money,
+    };
+
+    // Random event: can help or hurt (injury, windfall, illness, etc.)
+    this.applyRandomEvent(s);
+
+    // Random weekly bonus: small chance for a free stat bump (makes progression a bit easier)
+    this.applyRandomWeeklyBonus(s);
 
     if (s.week > 52) {
       s.week = 1;
@@ -1492,6 +2735,7 @@ export class UnifiedEngine {
       s.stats.seasonPins = 0;
       s.stats.seasonTechs = 0;
       s.stats.seasonMajors = 0;
+      s.conditioning = 50;
       if (HS_LEAGUES.includes(s.league)) {
         s.hsSchedule = this.generateHSSchedule();
         s.opponentPools = this.state.opponentPools;
@@ -1500,6 +2744,10 @@ export class UnifiedEngine {
         s.collegeSchedule = this.generateCollegeSchedule();
         s.collegeRoster = this.generateCollegeRoster();
         if ((s.eligibilityYearsRemaining ?? 4) > 0) s.eligibilityYearsRemaining = (s.eligibilityYearsRemaining ?? 4) - 1;
+        if ((s.eligibilityYearsRemaining ?? 0) <= 0) {
+          s.pendingCollegeGraduation = true;
+          s.story = "You've graduated college! Choose your path: pursue the Olympics, start a new career, or retire.";
+        }
       }
       const rating = s.overallRating ?? 50;
       const goodEnoughForVarsity = rating >= 68;
@@ -1525,15 +2773,30 @@ export class UnifiedEngine {
           s.opponentPools = this.state.opponentPools;
         }
         this.runHSWeekCompetition();
+        if (s.pendingCompetition) {
+          updateRating(s);
+          this.saveRng();
+          return s.week === 1;
+        }
       }
       if (isInCollege(s)) {
         if (!s.collegeSchedule?.length) {
           s.collegeSchedule = this.generateCollegeSchedule();
           s.collegeRoster = this.generateCollegeRoster();
         }
-        if (s.week >= 1 && s.week <= 7) this.runCollegeWeekCompetition();
+        if (s.week >= 1 && s.week <= SEASON_WEEKS) this.runCollegeWeekCompetition();
+        if (s.pendingCompetition) {
+          updateRating(s);
+          this.saveRng();
+          return s.week === 1;
+        }
       }
       const ran = this.runPostWeekTournaments();
+      if (s.pendingCompetition) {
+        updateRating(s);
+        this.saveRng();
+        return s.week === 1;
+      }
       if (!ran) {
         if (!s.lastWeekSummary) s.story = 'Week ' + s.week + ', Year ' + s.year + '.';
       }
@@ -1551,8 +2814,293 @@ export class UnifiedEngine {
       }
     }
     this.computeRecruitingScore();
+    // Life popups: ~35% chance per week; cap at 3 total (including when advancing multiple weeks — we never add if queue already has 3)
+    const MAX_PENDING_POPUPS = 3;
+    const current = s.pendingLifePopups ?? [];
+    if (current.length < MAX_PENDING_POPUPS && this.rng.float() < 0.35) {
+      const maxNew = Math.min(3, MAX_PENDING_POPUPS - current.length);
+      const newPopups = generateLifePopups(s, this.rng, maxNew);
+      s.pendingLifePopups = [...current, ...newPopups].slice(0, MAX_PENDING_POPUPS);
+    }
     this.saveRng();
     return s.week === 1;
+  }
+
+  /** Advance multiple weeks at once. Returns true if a new year was crossed. When autoTrainOnAdvance is true, each week is auto-trained (one training per week). */
+  advanceWeeks(n: number): boolean {
+    if (n < 1) return false;
+    const skipAutoTrain = !(this.state.autoTrainOnAdvance ?? true);
+    let newYear = false;
+    for (let i = 0; i < n; i++) {
+      if (this.state.pendingCompetition) break;
+      // When auto-training multiple weeks, give a small energy bump so every week can train (otherwise energy can dip below 20 after a few weeks)
+      if (!skipAutoTrain && n > 1 && (this.state.energy ?? 100) < 25) {
+        this.state.energy = Math.min(100, (this.state.energy ?? 0) + 8);
+      }
+      if (this.advanceWeek({ skipAutoTrain })) newYear = true;
+    }
+    return newYear;
+  }
+
+  setAutoTrainOnAdvance(value: boolean): void {
+    this.state.autoTrainOnAdvance = value;
+  }
+
+  /** Resolve post-college graduation choice: olympics (career end), retire (career end), or restart (caller should then go to create screen). Only available to college graduates. */
+  choosePostCollegeOption(option: 'olympics' | 'restart' | 'retire'): void {
+    const s = this.state;
+    if (!s.pendingCollegeGraduation || HS_LEAGUES.includes(s.league)) return;
+    s.pendingCollegeGraduation = false;
+    if (option === 'olympics') {
+      s.careerEnded = true;
+      s.careerEndChoice = 'olympics';
+      addStory(s, "You're going for the Olympics. Your collegiate career is complete — time to chase gold.");
+    } else if (option === 'retire') {
+      s.careerEnded = true;
+      s.careerEndChoice = 'retire';
+      addStory(s, "You've retired from competition. Thanks for an incredible career.");
+    }
+    // restart: only clear the flag; UI calls goToCreate() to start a new career
+  }
+
+  getPendingLifePopups(): LifePopup[] {
+    return this.state.pendingLifePopups ?? [];
+  }
+
+  getLifeLog(): LifeLogEntry[] {
+    return (this.state.lifeLog ?? []).slice(-80);
+  }
+
+  resolveLifePopup(popupId: string, choiceIndex: number): void {
+    const s = this.state;
+    const queue = s.pendingLifePopups ?? [];
+    const idx = queue.findIndex((p) => p.id === popupId);
+    if (idx < 0) return;
+    const popup = queue[idx];
+    const choice = popup.choices[choiceIndex];
+    if (!choice) return;
+    const eff = choice.effects;
+    const logParts: string[] = [];
+    if (eff.energy != null) {
+      s.energy = clamp(0, 100, (s.energy ?? 100) + eff.energy);
+      logParts.push(`Energy ${eff.energy >= 0 ? '+' : ''}${eff.energy}`);
+    }
+    if (eff.health != null) {
+      s.health = clamp(0, 100, (s.health ?? 100) + eff.health);
+      logParts.push(`Health ${eff.health >= 0 ? '+' : ''}${eff.health}`);
+    }
+    if (eff.stress != null) {
+      s.stress = clamp(0, 100, (s.stress ?? 0) + eff.stress);
+      logParts.push(`Stress ${eff.stress >= 0 ? '+' : ''}${eff.stress}`);
+    }
+    if (eff.grades != null) {
+      s.grades = clamp(0, 100, (s.grades ?? 75) + eff.grades);
+      logParts.push(`Grades ${eff.grades >= 0 ? '+' : ''}${eff.grades}`);
+    }
+    if (eff.popularity != null) {
+      s.popularity = clamp(0, 100, (s.popularity ?? 50) + eff.popularity);
+      logParts.push(`Popularity ${eff.popularity >= 0 ? '+' : ''}${eff.popularity}`);
+    }
+    if (eff.coachTrust != null) {
+      s.coachTrust = clamp(0, 100, (s.coachTrust ?? 50) + eff.coachTrust);
+      logParts.push(`CoachTrust ${eff.coachTrust >= 0 ? '+' : ''}${eff.coachTrust}`);
+    }
+    if (eff.money != null) {
+      s.money = Math.max(0, (s.money ?? 0) + eff.money);
+      logParts.push(`Money ${eff.money >= 0 ? '+' : ''}${eff.money}`);
+    }
+    if (eff.performanceMult != null) {
+      const w = s.weekModifiers ?? defaultWeekModifiers();
+      w.performanceMult = clamp(0.5, 1.5, (w.performanceMult ?? 1) + eff.performanceMult);
+      w.reasons.push('Life event');
+      logParts.push(`Perf ${eff.performanceMult >= 0 ? '+' : ''}${(eff.performanceMult * 100).toFixed(0)}%`);
+    }
+    if (eff.injuryRiskMult != null) {
+      const w = s.weekModifiers ?? defaultWeekModifiers();
+      w.injuryRiskMult = clamp(0.5, 2, (w.injuryRiskMult ?? 1) + eff.injuryRiskMult);
+      w.reasons.push('Life event');
+      logParts.push(`InjuryRisk ${eff.injuryRiskMult >= 0 ? '+' : ''}${(eff.injuryRiskMult * 100).toFixed(0)}%`);
+    }
+    if (eff.injurySeverity != null) {
+      s.health = Math.max(0, (s.health ?? 100) - Math.abs(eff.injurySeverity) * 2);
+      logParts.push('Injury');
+    }
+    if (eff.relationshipMeter != null) {
+      s.relationshipMeter = clamp(0, 100, (s.relationshipMeter ?? 0) + eff.relationshipMeter);
+      logParts.push(`Rel ${eff.relationshipMeter >= 0 ? '+' : ''}${eff.relationshipMeter}`);
+    }
+    if (eff.chemistry != null && s.loveInterest) {
+      s.loveInterest.chemistry = clamp(0, 100, (s.loveInterest.chemistry ?? 50) + eff.chemistry);
+      logParts.push(`Chemistry ${eff.chemistry >= 0 ? '+' : ''}${eff.chemistry}`);
+    }
+    if (eff.happiness != null) {
+      s.happiness = clamp(0, 100, (s.happiness ?? 75) + eff.happiness);
+      logParts.push(`Happiness ${eff.happiness >= 0 ? '+' : ''}${eff.happiness}`);
+    }
+    if (eff.social != null) {
+      s.social = clamp(0, 100, (s.social ?? 50) + eff.social);
+      logParts.push(`Social ${eff.social >= 0 ? '+' : ''}${eff.social}`);
+    }
+    if (popup.id.startsWith('popup_love_interest_meet') && (choiceIndex === 0 || choiceIndex === 1) && !s.loveInterest) {
+      const names = ['Jordan', 'Sam', 'Alex', 'Morgan', 'Riley', 'Casey', 'Quinn'];
+      s.loveInterest = { name: names[this.rng.next() % names.length], chemistry: 40 + this.rng.next() % 25 };
+      s.relationshipStatus = 'TALKING';
+      s.relationshipMeter = Math.min(100, (s.relationshipMeter ?? 0) + (choice.effects.relationshipMeter ?? 10));
+    }
+    const effectsStr = logParts.length ? logParts.join(', ') : '—';
+    if (!s.lifeLog) s.lifeLog = [];
+    s.lifeLog.push({
+      week: s.week,
+      year: s.year,
+      text: `Popup: ${popup.text.slice(0, 50)}… / Choice: ${choice.label} / Effects: ${effectsStr}`,
+    });
+    s.pendingLifePopups = queue.filter((_, i) => i !== idx);
+    this.saveRng();
+  }
+
+  /** Random events each week: good or bad (expenses, health, money, stress, etc.). */
+  private applyRandomEvent(s: UnifiedState): void {
+    if (this.rng.float() > 0.2) return;
+    const inCollege = isInCollege(s);
+    const roll = this.rng.int(0, inCollege ? 11 : 7);
+    switch (roll) {
+      case 0: {
+        const cost = inCollege ? this.rng.int(80, 220) : this.rng.int(30, 100);
+        s.money = Math.max(0, (s.money ?? 0) - cost);
+        addStory(s, inCollege ? `Unexpected textbook and lab fees. -$${cost}.` : `School fees and supplies. -$${cost}.`);
+        break;
+      }
+      case 1: {
+        const cost = this.rng.int(50, 180);
+        s.money = Math.max(0, (s.money ?? 0) - cost);
+        addStory(s, 'Car trouble (or transit costs). -$' + cost + '.');
+        break;
+      }
+      case 2: {
+        const hit = this.rng.int(5, 14);
+        s.health = Math.max(0, (s.health ?? 100) - hit);
+        s.energy = Math.max(0, (s.energy ?? 100) - this.rng.int(8, 18));
+        addStory(s, 'You caught a bug. Rest up. Health and energy took a hit.');
+        break;
+      }
+      case 3: {
+        s.stress = Math.min(100, (s.stress ?? 0) + this.rng.int(6, 16));
+        s.happiness = Math.max(0, (s.happiness ?? 75) - this.rng.int(4, 10));
+        addStory(s, 'Stressful week — family or personal stuff. Stress up, mood down.');
+        break;
+      }
+      case 4: {
+        const drop = this.rng.int(2, 6);
+        s.grades = Math.max(0, (s.grades ?? 75) - drop);
+        addStory(s, 'Missed assignment or tough exam. Grades -' + drop + '.');
+        break;
+      }
+      case 5: {
+        const gain = this.rng.int(40, 120);
+        s.money = (s.money ?? 0) + gain;
+        addStory(s, inCollege ? `Extra stipend from the program. +$${gain}.` : `Odd job or allowance. +$${gain}.`);
+        break;
+      }
+      case 6: {
+        s.energy = Math.min(100, (s.energy ?? 100) + this.rng.int(10, 22));
+        s.happiness = Math.min(100, (s.happiness ?? 75) + this.rng.int(4, 10));
+        addStory(s, 'Everything clicked this week. Energy and mood up.');
+        break;
+      }
+      case 7: {
+        if (!inCollege) break;
+        const cost = this.rng.int(25, 75);
+        s.money = Math.max(0, (s.money ?? 0) - cost);
+        addStory(s, `Parking ticket on campus. -$${cost}.`);
+        break;
+      }
+      case 8: {
+        if (!inCollege) break;
+        const cost = this.rng.int(60, 180);
+        s.money = Math.max(0, (s.money ?? 0) - cost);
+        addStory(s, 'Doctor visit — minor injury checkup. -$' + cost + '.');
+        s.health = Math.min(100, (s.health ?? 100) + this.rng.int(2, 6));
+        break;
+      }
+      case 9: {
+        if (!inCollege) break;
+        const gain = this.rng.int(30, 90);
+        s.money = (s.money ?? 0) + gain;
+        addStory(s, `NIL appearance or local sponsor. +$${gain}.`);
+        break;
+      }
+      case 10: {
+        if (!inCollege) break;
+        s.stress = Math.min(100, (s.stress ?? 0) + this.rng.int(4, 12));
+        addStory(s, 'Academic pressure — papers and exams piling up. Stress up.');
+        break;
+      }
+      case 11: {
+        if (!inCollege) break;
+        s.relationship = s.relationship ? { ...s.relationship, level: Math.min(100, (s.relationship.level ?? 50) + this.rng.int(3, 8)) } : null;
+        s.happiness = Math.min(100, (s.happiness ?? 75) + this.rng.int(2, 6));
+        addStory(s, 'Surprise call or visit from someone special. Mood and relationship up.');
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  /** Small chance each week for a random stat bonus (coach tip, good sleep, etc.) to make progression a bit easier. */
+  private applyRandomWeeklyBonus(s: UnifiedState): void {
+    if (this.rng.float() > 0.22) return;
+    const roll = this.rng.int(0, 6);
+    switch (roll) {
+      case 0:
+        s.technique = Math.min(100, (s.technique ?? 50) + 1);
+        addStory(s, 'Coach pointed out a detail in the room. Technique +1.');
+        break;
+      case 1:
+        s.matIQ = Math.min(100, (s.matIQ ?? 50) + 1);
+        addStory(s, 'Watched film on your own. Mat IQ +1.');
+        break;
+      case 2:
+        s.conditioning = Math.min(100, (s.conditioning ?? 50) + 1);
+        addStory(s, 'Felt sharp in the room. Conditioning +1.');
+        break;
+      case 3:
+        s.strength = Math.min(100, (s.strength ?? 50) + 1);
+        addStory(s, 'Extra reps paid off. Strength +1.');
+        break;
+      case 4:
+        s.energy = Math.min(100, (s.energy ?? 100) + 6);
+        addStory(s, 'Good sleep and recovery. Energy +6.');
+        break;
+      case 5:
+        s.grades = Math.min(100, (s.grades ?? 75) + 1);
+        addStory(s, 'Something clicked in class. Grades +1.');
+        break;
+      case 6:
+        s.happiness = Math.min(100, (s.happiness ?? 75) + 3);
+        addStory(s, 'A good week. Happiness +3.');
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** Get 15 opponents for 16-man HS bracket (district/state) from pools or generated. */
+  private getHSBracketOpponents16(): Opponent[] {
+    const s = this.state;
+    const pool = s.opponentPools;
+    const rankedList = [...(pool?.stateRanked ?? []), ...(pool?.nationalRanked ?? [])]
+      .sort((a, b) => b.overallRating - a.overallRating);
+    let list: Opponent[] =
+      rankedList.length >= 15
+        ? rankedList.slice(0, 15)
+        : [...rankedList, ...(pool?.unranked ?? []).slice(0, Math.max(0, 15 - rankedList.length))];
+    if (list.length === 0) list = (pool?.unranked ?? []).slice(0, 15);
+    if (list.length === 0) {
+      list = this.generateNamedBracketOpponents(s.overallRating ?? 50, { minRating: 50, maxRating: 92, count: 15 });
+    }
+    while (list.length < 15) list.push({ id: 'pad', name: 'Opponent', overallRating: 70, style: 'grinder', clutch: 50 });
+    return list.slice(0, 15);
   }
 
   private runPostWeekTournaments(): boolean {
@@ -1562,29 +3110,50 @@ export class UnifiedEngine {
         addStory(s, "JV doesn't compete at districts. Focus on next year.");
         return true;
       }
-      const finalsOppRating = clamp(55, 88, (s.overallRating ?? 50) + this.rng.int(-5, 12));
-      const wonFinals = this.simOneMatch({ id: 'dist_finals', name: 'District finals opponent', overallRating: finalsOppRating, style: 'grinder', clutch: 50 }, false).won;
-      const place = wonFinals ? 1 : 2;
-      s.stateQualified = place <= DISTRICTS_QUALIFY_TOP;
-      s.lastWeekSummary = { week: s.week, year: s.year, phase: 'District/Sectional', eventType: 'district', placement: place, message: [s.stateQualified ? `Districts: Finals ${wonFinals ? 'W' : 'L'} — placed ${place}, qualified for state!` : `Districts: placed ${place}. Top ${DISTRICTS_QUALIFY_TOP} qualify.`] };
-      addStory(s, s.stateQualified ? `Districts: Finals ${wonFinals ? 'W' : 'L'} — placed ${place}, qualified for state!` : `Districts: placed ${place}. Top ${DISTRICTS_QUALIFY_TOP} qualify.`);
+      if (!this.canWrestle()) {
+        addStory(s, "Grades too low — you're ineligible for districts. No competition.");
+        s.lastWeekSummary = { week: s.week, year: s.year, phase: 'District/Sectional', eventType: 'district', message: ["Academic ineligibility — you didn't compete at districts."] };
+        return true;
+      }
+      const districtOpponents = this.getHSBracketOpponents16();
+      const myRating = s.overallRating ?? 50;
+      const { participants } = this.buildBracket(s.name ?? 'You', myRating, districtOpponents, 16);
+      s.pendingTournamentPlay = {
+        kind: 'district',
+        phaseLabel: 'District/Sectional',
+        eventType: 'district',
+        week: s.week,
+        year: s.year,
+        opponents: districtOpponents,
+        bracketParticipants: participants,
+        bracketSize: 16,
+      };
+      s.lastWeekSummary = { week: s.week, year: s.year, phase: 'District/Sectional', eventType: 'district', message: ['16-man district bracket this week. Go to tournament to compete.'] };
+      this.saveRng();
       return true;
     }
     if (s.week === HS_WEEK_STATE && HS_LEAGUES.includes(s.league) && s.stateQualified) {
-      s.stats.stateAppearances++;
-      s.stats.hsRecord.stateAppearances++;
-      const finalsOppRating = clamp(60, 92, (s.overallRating ?? 50) + this.rng.int(-3, 10));
-      const wonFinals = this.simOneMatch({ id: 'state_finals', name: 'State finals opponent', overallRating: finalsOppRating, style: 'grinder', clutch: 50 }, false).won;
-      const place = wonFinals ? 1 : 2;
-      s.stats.statePlacements.push(place);
-      if (place === 1) {
-        s.stats.stateTitles++;
-        s.stats.hsRecord.stateTitles++;
-        s.accolades.push('State Champion (Year ' + s.year + ')');
-        addStory(s, 'STATE TOURNAMENT: You won the state finals! STATE CHAMPION!');
-      } else addStory(s, `State tournament: Lost in the finals. Placed 2nd.`);
-      s.stateQualified = false;
-      s.lastWeekSummary = { week: s.week, year: s.year, phase: 'State Tournament', eventType: 'state', placement: place, message: [place === 1 ? 'STATE CHAMPION!' : `State: lost in finals, 2nd.`] };
+      if (!this.canWrestle()) {
+        addStory(s, "Grades too low — you're ineligible for state. You had to sit out.");
+        s.stateQualified = false;
+        s.lastWeekSummary = { week: s.week, year: s.year, phase: 'State Tournament', eventType: 'state', message: ["Academic ineligibility — you didn't compete at state."] };
+        return true;
+      }
+      const stateOpponents = this.getHSBracketOpponents16();
+      const myRating = s.overallRating ?? 50;
+      const { participants } = this.buildBracket(s.name ?? 'You', myRating, stateOpponents, 16);
+      s.pendingTournamentPlay = {
+        kind: 'state',
+        phaseLabel: 'State Tournament',
+        eventType: 'state',
+        week: s.week,
+        year: s.year,
+        opponents: stateOpponents,
+        bracketParticipants: participants,
+        bracketSize: 16,
+      };
+      s.lastWeekSummary = { week: s.week, year: s.year, phase: 'State Tournament', eventType: 'state', message: ['16-man state bracket this week. Go to tournament to compete.'] };
+      this.saveRng();
       return true;
     }
     if (s.week === HS_WEEK_WRAP && HS_LEAGUES.includes(s.league)) {
@@ -1592,34 +3161,23 @@ export class UnifiedEngine {
       s.story = 'Week ' + s.week + ', Year ' + s.year + '. Season wrap.';
       return true;
     }
-    if (s.week === WEEK_CONFERENCE_COLLEGE && isInCollege(s)) {
-      const finalsOppRating = clamp(58, 90, (s.overallRating ?? 50) + this.rng.int(-4, 10));
-      const wonFinals = this.simOneMatch({ id: 'conf_finals', name: 'Conference finals opponent', overallRating: finalsOppRating, style: 'grinder', clutch: 50 }, false).won;
-      const place = wonFinals ? 1 : 2;
-      s.ncaaQualified = place <= CONFERENCE_QUALIFY_TOP;
-      addStory(s, s.ncaaQualified ? `Conference: ${wonFinals ? 'Won the finals!' : 'Lost in finals, 2nd.'} Qualified for NCAAs!` : `Conference: placed ${place}. Top ${CONFERENCE_QUALIFY_TOP} advance.`);
-      s.lastWeekSummary = { week: s.week, year: s.year, phase: 'Conference', eventType: 'district', placement: place, message: [s.ncaaQualified ? `Conference finals ${wonFinals ? 'W' : 'L'} — qualified for NCAAs.` : `Conference: placed ${place}.`] };
-      return true;
-    }
-    if (s.week === WEEK_NCAA && isInCollege(s) && s.ncaaQualified) {
-      s.stats.ncaaAppearances++;
-      s.stats.collegeRecord.ncaaAppearances++;
-      const finalsOppRating = clamp(65, 95, (s.overallRating ?? 50) + this.rng.int(-2, 8));
-      const wonFinals = this.simOneMatch({ id: 'ncaa_finals', name: 'NCAA finals opponent', overallRating: finalsOppRating, style: 'grinder', clutch: 50 }, false).won;
-      const place = wonFinals ? 1 : 2;
-      s.stats.ncaaPlacements.push(place);
-      if (place === 1) {
-        s.stats.ncaaTitles++;
-        s.stats.collegeRecord.ncaaTitles++;
-        s.accolades.push('NCAA Champion (Year ' + s.year + ')');
-        addStory(s, 'NCAA CHAMPIONSHIPS: You won the national finals! NATIONAL CHAMPION!');
-      } else {
-        s.stats.ncaaAllAmerican++;
-        s.stats.collegeRecord.ncaaAllAmerican++;
-        addStory(s, 'NCAA Championships: Lost in the finals. All-American, 2nd place.');
+    // Conference tournament is week 12 and handled in runCollegeWeekCompetition; NCAA qualification set there.
+    if (s.week === NCAA_WEEK && isInCollege(s) && s.ncaaQualified) {
+      if (!this.canWrestle()) {
+        addStory(s, "Academic ineligibility — you couldn't compete at NCAA Championships.");
+        s.ncaaQualified = false;
+        s.lastWeekSummary = { week: s.week, year: s.year, phase: 'NCAA Championships', eventType: 'state', message: ["Academic ineligibility — you didn't compete at NCAAs."] };
+        return true;
       }
-      s.ncaaQualified = false;
-      s.lastWeekSummary = { week: s.week, year: s.year, phase: 'NCAA Championships', eventType: 'state', placement: place, message: [place === 1 ? 'NCAA CHAMPION!' : 'NCAA finals: 2nd, All-American.'] };
+      const finalsOpp = this.getFinalsOpponentFromRankings() ?? {
+        id: 'ncaa_finals',
+        name: 'NCAA finals opponent',
+        overallRating: clamp(65, 95, (s.overallRating ?? 50) + this.rng.int(-2, 8)),
+        style: 'grinder' as const,
+        clutch: 50,
+      };
+      this.startPendingSingleMatch('ncaa', 'NCAA Championships', 'state', finalsOpp, 'Finals');
+      this.saveRng();
       return true;
     }
     return false;
@@ -1643,8 +3201,10 @@ export class UnifiedEngine {
     return list;
   }
 
-  runOffseasonEvent(eventKey: string): { success: boolean; place?: number; eventName?: string; message?: string; matches?: { won: boolean; method: string }[] } {
+  runOffseasonEvent(eventKey: string): { success: boolean; place?: number; eventName?: string; message?: string; matches?: { won: boolean; method: string }[]; bracketParticipants?: BracketParticipant[] } {
     const s = this.state;
+    if (s.pendingCompetition) return { success: false, message: 'Finish your current competition first.' };
+    if (s.pendingTournamentPlay) return { success: false, message: 'Go to tournament first (or simulate) before starting another event.' };
     const ev = OFFSEASON_EVENTS[eventKey];
     const weekOk = eventKey === 'fargo' ? FARGO_WEEKS.includes(s.week) : ev ? s.week === ev.week : false;
     const inCollege = HS_LEAGUES.indexOf(s.league) === -1;
@@ -1653,74 +3213,19 @@ export class UnifiedEngine {
     if (!ev.collegeOnly && inCollege) return { success: false, message: 'High school event only.' };
     if (eventKey === 'world_championship' && !s.qualifiedForWorldChampionshipThisYear) return { success: false, message: 'Qualify at US Open first (place 1st or 2nd).' };
     if ((s.money ?? 0) < ev.cost) return { success: false, message: "You can't afford it." };
+    if (!this.canWrestle()) return { success: false, message: "Grades too low — you're academically ineligible to compete." };
     if ((s.offseasonEventsUsedThisYear ?? {})[eventKey]) return { success: false, message: 'Already competed here this year.' };
     s.offseasonEventsUsedThisYear = s.offseasonEventsUsedThisYear ?? {};
     s.offseasonEventsUsedThisYear[eventKey] = true;
     s.money = Math.max(0, (s.money ?? 0) - ev.cost);
 
-    const eff = getEffectiveModifiers(s);
     const myRating = s.overallRating ?? 50;
-    const matches: { won: boolean; method: string }[] = [];
-    let wins = 0;
-    let place: number;
-
-    if (eventKey === 'us_open' || eventKey === 'world_championship') {
-      const getOpponent = (round: string): Opponent => {
-        const spread = round === 'Finals' ? this.rng.int(0, 8) : round === 'Semifinal' ? this.rng.int(-4, 6) : this.rng.int(-6, 4);
-        const rating = clamp(58, 96, myRating + spread + (ev.prestige - 1) * 5);
-        return { id: `${eventKey}_${round}`, name: round + ' opponent', overallRating: rating, style: 'grinder', clutch: 60 };
-      };
-      const numPoolMatches = 3;
-      for (let i = 0; i < numPoolMatches; i++) {
-        const opp = getOpponent('Pool');
-        let winChance = 0.45 + myRating / 120 - opp.overallRating / 120;
-        winChance *= eff.performanceMult;
-        winChance = clamp(0.08, 0.92, winChance);
-        const won = this.rng.float() < winChance;
-        const method = won ? (this.rng.float() < 0.2 ? 'Fall' : this.rng.float() < 0.45 ? 'Tech' : 'Dec') : 'Dec';
-        matches.push({ won, method });
-        if (won) { wins++; s.stats.matchesWon++; s.stats.seasonWins++; s.stats.collegeRecord.matchesWon++; }
-        else { s.stats.matchesLost++; s.stats.seasonLosses++; s.stats.collegeRecord.matchesLost++; }
-      }
-      const finalsOpp = getOpponent('Finals');
-      let finalsChance = 0.45 + myRating / 120 - finalsOpp.overallRating / 120;
-      finalsChance *= eff.performanceMult;
-      finalsChance = clamp(0.08, 0.92, finalsChance);
-      const wonFinals = this.rng.float() < finalsChance;
-      const finalsMethod = wonFinals ? (this.rng.float() < 0.2 ? 'Fall' : this.rng.float() < 0.45 ? 'Tech' : 'Dec') : 'Dec';
-      matches.push({ won: wonFinals, method: finalsMethod });
-      if (wonFinals) { wins++; s.stats.matchesWon++; s.stats.seasonWins++; s.stats.collegeRecord.matchesWon++; }
-      else { s.stats.matchesLost++; s.stats.seasonLosses++; s.stats.collegeRecord.matchesLost++; }
-      place = wonFinals ? 1 : 2;
-      const totalM = matches.length;
-      s.stats.collegeRecord.matchesWon += wins;
-      s.stats.collegeRecord.matchesLost += totalM - wins;
-      const matchStr = matches.map((m) => (m.won ? 'W' : 'L') + ' (' + m.method + ')').join(', ');
-      const placeStr = place === 1 ? '1st' : '2nd';
-      addStory(s, `${ev.name}: ${wins}-${totalM - wins}. ${matchStr}. Placed ${placeStr}.`);
-      if (eventKey === 'us_open') {
-        (s.stats.usOpenPlacements ?? []).push(place);
-        if (place <= 2) {
-          s.qualifiedForWorldChampionshipThisYear = true;
-          addStory(s, 'You qualified for the World Championship!');
-        }
-        if (place <= 2) s.accolades.push('US Open ' + (place === 1 ? 'Champ' : 'Runner-up') + ' (Year ' + s.year + ')');
-      } else {
-        (s.stats.worldChampionshipPlacements ?? []).push(place);
-        if (place <= 2) s.accolades.push('World ' + (place === 1 ? 'Champion' : 'Runner-up') + ' (Year ' + s.year + ')');
-      }
-      updateRating(s);
-      this.saveRng();
-      return { success: true, place, eventName: ev.name, matches };
-    }
-
     if (eventKey === 'wno') {
-      // Who's Number One = one match: if you're #1 you face #2, if you're #2 you face #1. Win = #1, lose = #2.
       const youAreNo1 = this.rng.float() < 0.5;
       const wc = s.weightClass ?? 145;
       const opponentRating = youAreNo1
-        ? clamp(70, 92, myRating + this.rng.int(-3, 5))  // #2 is close to you
-        : clamp(72, 94, myRating + this.rng.int(2, 8));  // #1 is slightly better
+        ? clamp(70, 92, myRating + this.rng.int(-3, 5))
+        : clamp(72, 94, myRating + this.rng.int(2, 8));
       const opp: Opponent = {
         id: 'wno',
         name: (youAreNo1 ? '#2' : '#1') + ' at ' + wc + ' lbs',
@@ -1728,81 +3233,45 @@ export class UnifiedEngine {
         style: 'grinder',
         clutch: 68,
       };
-      const { won, method } = this.simOneMatch(opp, false);
-      matches.push({ won, method });
-      if (won) {
-        wins++;
-        s.stats.matchesWon++;
-        s.stats.seasonWins++;
-      } else {
-        s.stats.matchesLost++;
-        s.stats.seasonLosses++;
-      }
-      place = won ? 1 : 2;  // Win = #1, lose = #2
+      this.startPendingSingleMatch('offseason', ev.name, 'tournament', opp, 'Final', eventKey);
+    } else if (eventKey === 'us_open' || eventKey === 'world_championship') {
+      const colOpponents = this.generateNamedBracketOpponents(myRating, {
+        minRating: 58,
+        maxRating: 96,
+        prestige: ev.prestige,
+      });
+      const { participants } = this.buildBracket(s.name, myRating, colOpponents);
+      s.pendingTournamentPlay = {
+        kind: 'offseason',
+        phaseLabel: ev.name,
+        eventType: 'tournament',
+        week: s.week,
+        year: s.year,
+        opponents: colOpponents,
+        bracketParticipants: participants,
+        offseasonEventKey: eventKey,
+      };
     } else {
-      const numPoolMatches = eventKey === 'fargo' ? 4 : 3;
-      for (let i = 0; i < numPoolMatches; i++) {
-        const oppStrength = 50 + (ev.prestige - 1) * 15 + (this.rng.float() - 0.5) * 20 + (i * 4);
-        const oppRating = clamp(45, 95, Math.round(oppStrength));
-        let winChance = 0.45 + myRating / 120 - oppRating / 120;
-        winChance *= eff.performanceMult;
-        winChance = clamp(0.08, 0.92, winChance);
-        const won = this.rng.float() < winChance;
-        const method = won ? (this.rng.float() < 0.25 ? 'Fall' : this.rng.float() < 0.5 ? 'Tech' : 'Dec') : 'Dec';
-        matches.push({ won, method });
-        if (won) {
-          wins++;
-          s.stats.matchesWon++;
-          s.stats.seasonWins++;
-        } else {
-          s.stats.matchesLost++;
-          s.stats.seasonLosses++;
-        }
-      }
-      const finalsOppRating = clamp(55, 95, myRating + this.rng.int(2, 12));
-      let finalsWinChance = 0.45 + myRating / 120 - finalsOppRating / 120;
-      finalsWinChance *= eff.performanceMult;
-      finalsWinChance = clamp(0.08, 0.92, finalsWinChance);
-      const wonFinals = this.rng.float() < finalsWinChance;
-      const finalsMethod = wonFinals ? (this.rng.float() < 0.25 ? 'Fall' : this.rng.float() < 0.5 ? 'Tech' : 'Dec') : 'Dec';
-      matches.push({ won: wonFinals, method: finalsMethod });
-      if (wonFinals) {
-        wins++;
-        s.stats.matchesWon++;
-        s.stats.seasonWins++;
-      } else {
-        s.stats.matchesLost++;
-        s.stats.seasonLosses++;
-      }
-      place = wonFinals ? 1 : 2;
+      const hsOpponents = this.generateNamedBracketOpponents(myRating, {
+        minRating: 45,
+        maxRating: 95,
+        prestige: ev.prestige,
+      });
+      const { participants } = this.buildBracket(s.name, myRating, hsOpponents);
+      s.pendingTournamentPlay = {
+        kind: 'offseason',
+        phaseLabel: ev.name,
+        eventType: 'tournament',
+        week: s.week,
+        year: s.year,
+        opponents: hsOpponents,
+        bracketParticipants: participants,
+        offseasonEventKey: eventKey,
+      };
     }
 
-    const totalMatches = matches.length;
-    s.stats.hsRecord.matchesWon += wins;
-    s.stats.hsRecord.matchesLost += totalMatches - wins;
-    const matchStr = matches.map((m) => (m.won ? 'W' : 'L') + ' (' + m.method + ')').join(', ');
-    const placeStr = place === 1 ? '1st' : place === 2 ? '2nd' : place === 3 ? '3rd' : place + 'th';
-    addStory(s, eventKey === 'wno'
-      ? `${ev.name}: One match for the top spot. ${matchStr}. ${place === 1 ? "You're #1." : "You're #2."}`
-      : `${ev.name}: You went ${wins}-${totalMatches - wins}. ${matchStr}. Placed ${placeStr}.`);
-
-    if (eventKey === 'fargo') {
-      s.stats.fargoPlacements.push(place);
-      if (place <= 2) s.accolades.push('Fargo ' + (place === 1 ? 'Champ' : 'Runner-up') + ' (Year ' + s.year + ')');
-    } else if (eventKey === 'super32') {
-      s.stats.super32Placements.push(place);
-      if (place <= 2) s.accolades.push('Super 32 ' + (place === 1 ? 'Champ' : 'Runner-up') + ' (Year ' + s.year + ')');
-    } else if (eventKey === 'wno') {
-      s.stats.wnoAppearances++;
-      if (place === 1) {
-        s.stats.wnoWins++;
-        s.accolades.push('WNO Champion (Year ' + s.year + ')');
-        s.overallRating = Math.min(99, (s.overallRating ?? 50) + 5);
-      }
-    }
-    this.computeRecruitingScore();
     this.saveRng();
-    return { success: true, place, eventName: ev.name, matches };
+    return { success: true, eventName: ev.name, message: 'Event started. Play your matches now.' };
   }
 
   getRelationships(): RelationshipEntry[] {
@@ -1942,18 +3411,30 @@ export class UnifiedEngine {
     const rankScore = (wins: number, losses: number, overall: number) => (wins - losses) * 1000 + overall;
     for (const w of weightList) {
       if (!s.rankingsByWeight[w] || s.rankingsByWeight[w].length === 0) {
-        s.rankingsByWeight[w] = [];
-        for (let i = 0; i < 15; i++) {
-          const ts = 58 + (this.rng.float() - 0.5) * 28;
-          const overall = clamp(62, 99, Math.round(72 + (this.rng.float() - 0.5) * 22));
-          s.rankingsByWeight[w].push({
-            id: `ai_${w}_${this.rng.next()}`,
-            name: firstNames[this.rng.next() % firstNames.length] + ' ' + lastNames[this.rng.next() % lastNames.length],
-            overallRating: overall,
-            trueSkill: ts,
-          });
+        const pool = s.opponentPools;
+        if (w === wc && pool && (pool.stateRanked.length > 0 || pool.nationalRanked.length > 0)) {
+          const merged = [...pool.stateRanked, ...pool.nationalRanked]
+            .sort((a, b) => b.overallRating - a.overallRating);
+          s.rankingsByWeight[w] = merged.map((o) => ({
+            id: o.id,
+            name: o.name,
+            overallRating: o.overallRating,
+            trueSkill: o.overallRating,
+          }));
+        } else {
+          s.rankingsByWeight[w] = [];
+          for (let i = 0; i < 15; i++) {
+            const ts = 58 + (this.rng.float() - 0.5) * 28;
+            const overall = clamp(62, 99, Math.round(72 + (this.rng.float() - 0.5) * 22));
+            s.rankingsByWeight[w].push({
+              id: `ai_${w}_${this.rng.next()}`,
+              name: firstNames[this.rng.next() % firstNames.length] + ' ' + lastNames[this.rng.next() % lastNames.length],
+              overallRating: overall,
+              trueSkill: ts,
+            });
+          }
+          s.rankingsByWeight[w].sort((a, b) => b.overallRating - a.overallRating);
         }
-        s.rankingsByWeight[w].sort((a, b) => b.overallRating - a.overallRating);
       }
       const list = s.rankingsByWeight[w];
       if (w === wc) {
@@ -2018,7 +3499,7 @@ export class UnifiedEngine {
     return this.state.collegeSchedule?.find((e) => e.week === week);
   }
 
-  /** Label to show on the calendar for a given week (tournament name, dual opponent, Conference, NCAA, Districts, State, etc.). */
+  /** Label to show on the calendar for a given week (tournament name, dual opponent, Conference, NCAA, Districts, State, offseason events, etc.). */
   getScheduleDisplayLabel(week: number): string {
     if (HS_LEAGUES.includes(this.state.league)) {
       const entry = this.getHSScheduleEntry(week);
@@ -2030,14 +3511,26 @@ export class UnifiedEngine {
       if (week === HS_WEEK_DISTRICT) return 'Districts';
       if (week === HS_WEEK_STATE) return 'State';
       if (week === HS_WEEK_WRAP) return 'Wrap';
+      if (FARGO_WEEKS.includes(week)) return 'Fargo';
+      if (week === SUPER32_WEEK) return 'Super 32';
+      if (week === WNO_WEEK) return "WNO";
       return '';
     }
     const entry = this.getCollegeScheduleEntry(week);
-    if (!entry) return '';
-    if (entry.type === 'dual') return entry.opponentName ? `vs ${entry.opponentName}` : 'Dual';
-    if (entry.type === 'tournament') return entry.tournamentName ?? 'Tournament';
-    if (entry.type === 'conference') return 'Conference';
-    if (entry.type === 'ncaa') return 'NCAA';
+    if (entry) {
+      if (entry.type === 'dual') {
+        if (entry.blockType === 'travel_dual_weekend' && entry.opponentNames?.length) {
+          return `2 duals: ${entry.opponentNames[0]}${entry.opponentNames.length > 1 ? '+' : ''}`;
+        }
+        return entry.opponentName ? `vs ${entry.opponentName}` : 'Dual';
+      }
+      if (entry.type === 'tournament') return entry.tournamentName ?? 'Tournament';
+      if (entry.type === 'conference') return 'Conf Champs';
+      if (entry.type === 'ncaa') return 'NCAA';
+      if (entry.type === 'none') return 'Recovery';
+    }
+    if (week === US_OPEN_WEEK) return 'US Open';
+    if (week === WORLD_CHAMPIONSHIP_WEEK) return 'World Champ';
     return '';
   }
 
@@ -2058,7 +3551,9 @@ export class UnifiedEngine {
       if (s.collegeSchedule?.length) {
         const next = s.collegeSchedule.find((e) => e.week >= cur && (e.type === 'dual' || e.type === 'tournament' || e.type === 'conference' || e.type === 'ncaa'));
         if (next) {
-          const label = next.type === 'dual' ? `Dual vs ${next.opponentName ?? 'TBD'}` : next.type === 'tournament' ? (next.tournamentName ?? 'Tournament') : next.type === 'conference' ? 'Conference' : 'NCAA Championships';
+          const label = next.type === 'dual'
+            ? (next.opponentNames?.length ? `Duals: ${next.opponentNames.join(', ')}` : `Dual vs ${next.opponentName ?? 'TBD'}`)
+            : next.type === 'tournament' ? (next.tournamentName ?? 'Tournament') : next.type === 'conference' ? 'Conference Championship' : 'NCAA Championships';
           return { week: next.week, label, type: next.type };
         }
       } else {
@@ -2079,5 +3574,16 @@ export class UnifiedEngine {
   static getWeightClasses(league?: LeagueKey): number[] {
     const inCollege = league && HS_LEAGUES.indexOf(league) === -1;
     return inCollege ? [...COLLEGE_WEIGHT_CLASSES] : [...WEIGHT_CLASSES];
+  }
+
+  /** Switch to a different weight class (must be valid for current league: HS or college). Returns true if changed. */
+  setWeightClass(newWeight: number): boolean {
+    const s = this.state;
+    const allowed = UnifiedEngine.getWeightClasses(s.league);
+    if (!allowed.includes(newWeight) || (s.weightClass ?? 145) === newWeight) return false;
+    s.weightClass = newWeight;
+    addStory(s, `You moved to ${newWeight} lbs.`);
+    this.saveRng();
+    return true;
   }
 }

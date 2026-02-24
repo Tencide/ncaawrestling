@@ -1,7 +1,8 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useState } from 'react';
-import type { UnifiedState, CustomStartOptions, CollegeOffer, HousingTier, CarTier, MealPlanTier, RecoveryTier } from '@/engine/unified/types';
+import type { UnifiedState, CustomStartOptions, CollegeOffer, HousingTier, CarTier, MealPlanTier, RecoveryTier, LifePopup, LifeLogEntry, BracketParticipant, PendingTournamentPlay } from '@/engine/unified/types';
+import type { School } from '@/engine/types';
 import { UnifiedEngine } from '@/engine/unified/UnifiedEngine';
 
 type Screen = 'create' | 'game';
@@ -15,19 +16,36 @@ interface GameContextValue {
   applyChoice: (choiceKey: string) => void;
   applyRelationshipAction: (relId: string, actionKey: string) => void;
   advanceWeek: () => boolean;
-  runOffseasonEvent: (eventKey: string) => { success: boolean; place?: number; eventName?: string; message?: string; matches?: { won: boolean; method: string }[] };
+  advanceWeeks: (n: number) => boolean;
+  autoTrainOnAdvance: boolean;
+  setAutoTrainOnAdvance: (value: boolean) => void;
+  runOffseasonEvent: (eventKey: string) => { success: boolean; place?: number; eventName?: string; message?: string; matches?: { won: boolean; method: string }[]; bracketParticipants?: BracketParticipant[] };
   getCollegeOffers: () => CollegeOffer[];
+  getSchools: () => School[];
+  requestCollegeOffer: (schoolId: string) => { success: boolean; message: string };
   getCanAdvanceWeek: () => boolean;
   acceptOffer: (schoolId: string) => boolean;
   negotiateOffer: (schoolId: string, request: { moreTuition?: boolean; moreNIL?: boolean }) => { success: boolean; message: string };
   canEnterTransferPortal: () => boolean;
   enterTransferPortal: () => boolean;
   getTransferOffers: () => CollegeOffer[];
+  requestTransferOffer: (schoolId: string) => { success: boolean; message: string };
   negotiateTransferOffer: (schoolId: string, request: { moreTuition?: boolean; moreNIL?: boolean }) => { success: boolean; message: string };
   acceptTransfer: (schoolId: string) => boolean;
   withdrawFromTransferPortal: () => boolean;
   purchaseLifestyle: (category: 'car' | 'recoveryEquipment', tier: CarTier | RecoveryTier) => { success: boolean; message: string };
   upgradeLifestyleWeekly: (category: 'housing' | 'mealPlan', tier: HousingTier | MealPlanTier) => { success: boolean; message: string };
+  purchaseCustomItem: (itemId: string) => { success: boolean; message: string };
+  getPendingLifePopups: () => LifePopup[];
+  resolveLifePopup: (popupId: string, choiceIndex: number) => void;
+  getLifeLog: () => LifeLogEntry[];
+  playCompetitionAction: (actionKey: string, opts?: { timedOut?: boolean }) => void;
+  getPendingTournamentPlay: () => PendingTournamentPlay | null;
+  startTournamentPlay: () => boolean;
+  simulateTournamentBracket: () => boolean;
+  simulatePendingCompetitionMatch: () => boolean;
+  choosePostCollegeOption: (option: 'olympics' | 'restart' | 'retire') => void;
+  setWeightClass: (newWeight: number) => boolean;
   goToCreate: () => void;
   goToGame: () => void;
 }
@@ -73,6 +91,19 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     return newYear;
   }, [engine]);
 
+  const advanceWeeks = useCallback((n: number): boolean => {
+    if (!engine || n < 1) return false;
+    const newYear = engine.advanceWeeks(n);
+    setState(JSON.parse(JSON.stringify(engine.getState())));
+    return newYear;
+  }, [engine]);
+
+  const setAutoTrainOnAdvance = useCallback((value: boolean) => {
+    if (!engine) return;
+    engine.setAutoTrainOnAdvance(value);
+    setState(JSON.parse(JSON.stringify(engine.getState())));
+  }, [engine]);
+
   const runOffseasonEvent = useCallback((eventKey: string) => {
     if (!engine) return { success: false, message: 'No game' };
     const result = engine.runOffseasonEvent(eventKey);
@@ -81,6 +112,13 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   }, [engine]);
 
   const getCollegeOffers = useCallback(() => (engine ? engine.getCollegeOffers() : []), [engine]);
+  const getSchools = useCallback(() => (engine ? engine.getSchools() : []), [engine]);
+  const requestCollegeOffer = useCallback((schoolId: string) => {
+    if (!engine) return { success: false, message: 'No game.' };
+    const result = engine.requestCollegeOffer(schoolId);
+    if (result.success) setState(JSON.parse(JSON.stringify(engine.getState())));
+    return result;
+  }, [engine]);
   const getCanAdvanceWeek = useCallback(() => (engine ? engine.getCanAdvanceWeek() : false), [engine]);
   const acceptOffer = useCallback((schoolId: string) => {
     if (!engine) return false;
@@ -103,6 +141,12 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     return ok;
   }, [engine]);
   const getTransferOffers = useCallback(() => (engine ? engine.getTransferOffers() : []), [engine]);
+  const requestTransferOffer = useCallback((schoolId: string) => {
+    if (!engine) return { success: false, message: 'No game.' };
+    const result = engine.requestTransferOffer(schoolId);
+    if (result.success) setState(JSON.parse(JSON.stringify(engine.getState())));
+    return result;
+  }, [engine]);
   const negotiateTransferOffer = useCallback((schoolId: string, request: { moreTuition?: boolean; moreNIL?: boolean }) => {
     if (!engine) return { success: false, message: 'No game.' };
     const result = engine.negotiateTransferOffer(schoolId, request);
@@ -135,6 +179,60 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     return result;
   }, [engine]);
 
+  const purchaseCustomItem = useCallback((itemId: string) => {
+    if (!engine) return { success: false, message: 'No game.' };
+    const result = engine.purchaseCustomItem(itemId);
+    if (result.success) setState(JSON.parse(JSON.stringify(engine.getState())));
+    return result;
+  }, [engine]);
+
+  const getPendingLifePopups = useCallback(() => (engine ? engine.getPendingLifePopups() : []), [engine]);
+  const resolveLifePopup = useCallback((popupId: string, choiceIndex: number) => {
+    if (!engine) return;
+    engine.resolveLifePopup(popupId, choiceIndex);
+    setState(JSON.parse(JSON.stringify(engine.getState())));
+  }, [engine]);
+  const getLifeLog = useCallback(() => (engine ? engine.getLifeLog() : []), [engine]);
+
+  const playCompetitionAction = useCallback((actionKey: string, opts?: { timedOut?: boolean }) => {
+    if (!engine) return;
+    engine.playPendingCompetitionAction(actionKey, opts);
+    setState(JSON.parse(JSON.stringify(engine.getState())));
+  }, [engine]);
+
+  const getPendingTournamentPlay = useCallback(() => (engine ? engine.getPendingTournamentPlay() : null), [engine]);
+  const startTournamentPlay = useCallback(() => {
+    if (!engine) return false;
+    const ok = engine.startTournamentPlay();
+    if (ok) setState(JSON.parse(JSON.stringify(engine.getState())));
+    return ok;
+  }, [engine]);
+  const simulateTournamentBracket = useCallback(() => {
+    if (!engine) return false;
+    const ok = engine.simulateTournamentBracket();
+    if (ok) setState(JSON.parse(JSON.stringify(engine.getState())));
+    return ok;
+  }, [engine]);
+  const simulatePendingCompetitionMatch = useCallback(() => {
+    if (!engine) return false;
+    const ok = engine.simulatePendingCompetitionMatch();
+    if (ok) setState(JSON.parse(JSON.stringify(engine.getState())));
+    return ok;
+  }, [engine]);
+
+  const choosePostCollegeOption = useCallback((option: 'olympics' | 'restart' | 'retire') => {
+    if (!engine) return;
+    engine.choosePostCollegeOption(option);
+    setState(JSON.parse(JSON.stringify(engine.getState())));
+  }, [engine]);
+
+  const setWeightClass = useCallback((newWeight: number): boolean => {
+    if (!engine) return false;
+    const ok = engine.setWeightClass(newWeight);
+    if (ok) setState(JSON.parse(JSON.stringify(engine.getState())));
+    return ok;
+  }, [engine]);
+
   const value: GameContextValue = {
     screen,
     state,
@@ -144,19 +242,36 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     applyChoice,
     applyRelationshipAction,
     advanceWeek,
+    advanceWeeks,
+    autoTrainOnAdvance: state?.autoTrainOnAdvance ?? true,
+    setAutoTrainOnAdvance,
     runOffseasonEvent,
     getCollegeOffers,
+    getSchools,
+    requestCollegeOffer,
     getCanAdvanceWeek,
     acceptOffer,
     negotiateOffer,
     canEnterTransferPortal,
     enterTransferPortal,
     getTransferOffers,
+    requestTransferOffer,
     negotiateTransferOffer,
     acceptTransfer,
     withdrawFromTransferPortal,
     purchaseLifestyle,
     upgradeLifestyleWeekly,
+    purchaseCustomItem,
+    getPendingLifePopups,
+    resolveLifePopup,
+    getLifeLog,
+    playCompetitionAction,
+    getPendingTournamentPlay,
+    startTournamentPlay,
+    simulateTournamentBracket,
+    simulatePendingCompetitionMatch,
+    choosePostCollegeOption,
+    setWeightClass,
     goToCreate: () => setScreen('create'),
     goToGame: () => setScreen('game'),
   };
