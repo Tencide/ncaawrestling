@@ -50,7 +50,6 @@ export function UnifiedGameLayout() {
   // Reset exchange timer whenever a new exchange prompt is shown
   useEffect(() => {
     if (!pendingComp?.current) return;
-    const key = `${pendingComp.current.id}_${pendingComp.current.matchState.period}_${pendingComp.current.prompt.prompt}`;
     setExchangeTimerLeft(pendingComp.current.timerSeconds ?? DECISION_TIMER_SECONDS);
     setAutoFiredKey(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -144,14 +143,26 @@ export function UnifiedGameLayout() {
   const hoursLeft = state.hoursLeftThisWeek ?? 40;
 
   const tabClass = (v: typeof view) =>
-    `min-h-[36px] px-2.5 py-1.5 rounded-lg text-xs font-medium touch-manipulation ${view === v ? 'bg-blue-600 dark:bg-blue-500 text-white' : 'bg-slate-300 dark:bg-zinc-700 text-slate-700 dark:text-zinc-400 active:bg-slate-400 dark:active:bg-zinc-600'}`;
+    `min-h-[32px] px-3 py-1.5 rounded-full text-[11px] font-semibold uppercase tracking-wide touch-manipulation transition-colors ${
+      view === v
+        ? 'bg-sky-500/90 text-white'
+        : 'bg-[#3f424a] text-slate-400 hover:bg-slate-600/80'
+    }`;
   const viewLabels: Record<typeof view, string> = { play: 'Play', rankings: 'Rankings', trophies: 'Trophies', schedule: 'Schedule', settings: 'Settings', relationships: 'Relationships', team: 'Team', college: 'College', lifestyle: 'Lifestyle', life: 'Life' };
   const pendingPopups = getPendingLifePopups();
   const currentPopup = pendingPopups[0];
   const lifeLog = getLifeLog();
 
+  const bottomNavItems: { id: typeof view; label: string }[] = [
+    { id: 'play', label: 'Play' },
+    { id: 'rankings', label: 'Rank' },
+    { id: 'schedule', label: 'Weeks' },
+    { id: 'lifestyle', label: 'Life' },
+    { id: 'settings', label: 'Settings' },
+  ];
+
   return (
-    <div className="flex flex-col md:flex-row h-screen max-h-[100dvh] bg-white dark:bg-zinc-950 text-slate-900 dark:text-zinc-200 overflow-hidden">
+    <div className="relative flex flex-1 min-h-0 flex-col md:flex-row bg-[#1e2128] text-slate-50 overflow-hidden">
       {/* BitLife-style life popup modal */}
       {currentPopup && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60" role="dialog" aria-modal="true" aria-labelledby="life-popup-title">
@@ -267,7 +278,7 @@ export function UnifiedGameLayout() {
       )}
 
       {/* Left panel — desktop: always visible; mobile: expandable drawer */}
-      <aside className="hidden md:flex w-52 shrink-0 border-r border-slate-200 dark:border-zinc-700 bg-slate-50 dark:bg-zinc-900/80 p-4 flex-col gap-3 overflow-y-auto">
+      <aside className="hidden md:flex w-56 shrink-0 border-r border-slate-800 bg-[#252830] p-4 flex-col gap-4 overflow-y-auto pt-20">
         <LeftBarContent gameState={state} />
       </aside>
 
@@ -287,27 +298,41 @@ export function UnifiedGameLayout() {
         </>
       )}
 
-      {/* Mobile top bar: row 1 = menu + name/rating; row 2 = Hours, Energy, $ (no New game — in Settings) */}
-      <header className="md:hidden shrink-0 border-b border-slate-200 dark:border-zinc-700 bg-slate-100 dark:bg-zinc-900/95 px-3 py-2 flex flex-col gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <button type="button" onClick={() => setLeftBarOpen(true)} className="rounded-lg p-2 min-h-[40px] min-w-[40px] flex items-center justify-center bg-slate-300 dark:bg-zinc-700 text-slate-700 dark:text-zinc-300 active:bg-slate-400 dark:active:bg-zinc-600 touch-manipulation shrink-0" aria-label="Open stats">
-            <span className="text-base font-bold leading-none">≡</span>
-          </button>
-          <div className="flex items-center gap-2 min-w-0 flex-1 justify-center">
-            <span className="text-blue-600 dark:text-blue-400 font-semibold truncate">{state.name}</span>
-            <span className="text-slate-900 dark:text-white font-bold shrink-0">{state.overallRating}</span>
-            <span className="text-slate-500 dark:text-zinc-500 text-xs shrink-0">{state.weightClass} lbs</span>
+      {/* Mobile top bar — inspo: $ + energy left, END WEEK + week right */}
+      <header className="md:hidden shrink-0 border-b border-slate-800 bg-[#1e2128] px-4 py-3">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex min-w-0 flex-1 items-start gap-2">
+            <button type="button" onClick={() => setLeftBarOpen(true)} className="mt-0.5 rounded-lg p-1.5 text-slate-400 active:bg-slate-700/80 touch-manipulation shrink-0" aria-label="Open stats">
+              <span className="text-lg leading-none">≡</span>
+            </button>
+            <div>
+              <div className="text-xl font-bold text-white">${state.money}</div>
+              <div className="flex items-center gap-1 text-sm text-rose-400">
+                <span aria-hidden>⚡</span>
+                <span className="text-white">{state.energy}</span>
+                <span className="text-slate-500">|</span>
+                <span className="text-slate-400">100</span>
+              </div>
+            </div>
           </div>
-        </div>
-        <div className="flex items-center gap-4 text-sm text-slate-700 dark:text-zinc-300 shrink-0">
-          <span><span className="text-blue-600 dark:text-blue-400 font-medium">Hours:</span> {hoursLeft}</span>
-          <span><span className="text-blue-600 dark:text-blue-400 font-medium">Energy:</span> {state.energy}</span>
-          <span className="text-green-600 dark:text-green-400 font-medium">${state.money}</span>
+          <div className="flex shrink-0 flex-col items-end">
+            <button
+              type="button"
+              onClick={() => advanceWeek()}
+              disabled={!getCanAdvanceWeek()}
+              className="rounded-full bg-[#22c55e] px-5 py-2.5 text-sm font-bold uppercase tracking-wide text-white shadow-none disabled:opacity-50 disabled:bg-slate-700 touch-manipulation"
+            >
+              End Week
+            </button>
+            <div className="mt-1 text-[11px] text-slate-400">
+              Week {state.week ?? 1}, {state.year}
+            </div>
+          </div>
         </div>
       </header>
 
-      {/* Center */}
-      <main className="flex-1 min-h-0 min-w-0 p-4 md:p-6 flex flex-col gap-4 overflow-y-auto overflow-x-hidden pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+      {/* Center — scrollable content */}
+      <main className="flex-1 min-h-0 min-w-0 p-4 pt-4 md:pt-20 md:px-6 md:pb-6 pb-28 flex flex-col gap-3 overflow-y-auto overflow-x-hidden overscroll-contain">
         {/* Nav: expandable on mobile, compact horizontal on desktop */}
         <div className="flex-shrink-0 w-full">
           {/* Mobile: menu toggle + current view; expandable list */}
@@ -316,7 +341,7 @@ export function UnifiedGameLayout() {
               <button
                 type="button"
                 onClick={() => setNavExpanded((e) => !e)}
-                className="rounded-lg bg-slate-300 dark:bg-zinc-700 min-h-[36px] px-3 py-2 text-xs font-medium touch-manipulation flex items-center gap-1.5"
+                className="rounded-full bg-[#3f424a] border border-slate-700 min-h-[32px] px-3 py-1.5 text-[11px] font-semibold touch-manipulation flex items-center gap-1.5 text-slate-200"
                 aria-expanded={navExpanded}
               >
                 <span className="inline-block w-4 h-0.5 bg-current rounded" style={{ boxShadow: '0 -5px 0 currentColor, 0 5px 0 currentColor' }} />
@@ -327,7 +352,7 @@ export function UnifiedGameLayout() {
               )}
             </div>
             {navExpanded && (
-              <div className="mt-2 p-2 rounded-lg bg-slate-100 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-600 flex flex-wrap gap-1.5 max-h-[50vh] overflow-y-auto">
+              <div className="mt-2 p-2 rounded-2xl bg-slate-950/90 border border-slate-800 flex flex-wrap gap-1.5 max-h-[50vh] overflow-y-auto">
                 {(['play', 'rankings', 'college', 'relationships', 'trophies', 'schedule', 'lifestyle', 'life', 'team', 'settings'] as const).filter((v) => (v !== 'college' || isHS || isInCollege) && (v !== 'team' || isInCollege)).map((v) => (
                   <button key={v} type="button" onClick={() => { setView(v); setNavExpanded(false); }} className={tabClass(v)}>
                     {v === 'college' && state.pendingCollegeChoice ? 'College (pick)' : viewLabels[v]}
@@ -337,8 +362,8 @@ export function UnifiedGameLayout() {
             )}
           </div>
           {/* Desktop: horizontal scroll, smaller buttons */}
-          <div className="hidden md:block overflow-x-auto overflow-y-hidden scrollbar-thin scrollbar-thumb-slate-400 dark:scrollbar-thumb-zinc-600 touch-pan-x -mx-1 px-1">
-            <div className="flex gap-1.5 flex-nowrap min-w-min py-0.5">
+          <div className="hidden md:block overflow-x-auto overflow-y-hidden touch-pan-x -mx-1 px-1">
+            <div className="flex gap-1 flex-nowrap min-w-min py-0.5">
               <button type="button" onClick={() => setView('play')} className={tabClass('play')}>Play</button>
               <button type="button" onClick={() => setView('rankings')} className={tabClass('rankings')}>Rankings</button>
               {(isHS || isInCollege) && (
@@ -472,30 +497,31 @@ export function UnifiedGameLayout() {
           </div>
         )}
 
-{view === 'play' && (
+        {view === 'play' && (
             <>
             {(() => {
               const pendingTournament = getPendingTournamentPlay();
               if (pendingTournament) {
                 const label = pendingTournament.phaseLabel ?? (pendingTournament.offseasonEventKey ? pendingTournament.offseasonEventKey.replace(/_/g, ' ') : 'Tournament');
                 return (
-                  <div className="rounded-lg bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-500 dark:border-amber-500 p-4 mb-4">
-                    <h3 className="text-amber-800 dark:text-amber-200 font-semibold text-lg mb-2">Go to tournament</h3>
-                    <p className="text-sm text-amber-700 dark:text-amber-300 mb-3">{label} — play the bracket or simulate all matches.</p>
+                  <div className="rounded-xl bg-amber-950/40 border border-amber-500/50 p-4 mb-4">
+                    <h2 className="wp-section-title text-amber-300/90">Tournament</h2>
+                    <p className="text-sm text-amber-200/80 mb-3">{label} — play the bracket or simulate all matches.</p>
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
                         onClick={() => startTournamentPlay()}
-                        className="rounded-lg bg-blue-600 dark:bg-blue-500 text-white px-4 py-2.5 font-semibold hover:bg-blue-500 dark:hover:bg-blue-400 touch-manipulation"
+                        className="rounded-full bg-[#22c55e] text-white px-5 py-2.5 text-sm font-bold uppercase tracking-wide hover:opacity-90 touch-manipulation"
                       >
                         Play bracket
                       </button>
                       <button
                         type="button"
                         onClick={() => simulateTournamentBracket()}
-                        className="rounded-lg bg-slate-300 dark:bg-zinc-600 text-slate-800 dark:text-zinc-200 px-4 py-2.5 font-semibold hover:bg-slate-400 dark:hover:bg-zinc-500 touch-manipulation"
+                        className="wp-action-card"
                       >
-                        Simulate bracket
+                        <span className="wp-action-card-title">Simulate bracket</span>
+                        <span className="wp-action-card-arrow" aria-hidden>→</span>
                       </button>
                     </div>
                   </div>
@@ -506,15 +532,20 @@ export function UnifiedGameLayout() {
             {(() => {
               const next = engine.getNextEvent();
               return next ? (
-                <div className="rounded-lg bg-slate-200/80 dark:bg-zinc-800/60 border border-slate-300 dark:border-zinc-600 px-4 py-2">
-                  <p className="text-sm text-slate-600 dark:text-zinc-400">
-                    <span className="font-medium text-slate-700 dark:text-zinc-300">Up next:</span> Week {next.week} · {next.label}
-                  </p>
+                <div className="wp-action-card">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-widest text-slate-500">Up Next</p>
+                    <p className="text-sm font-semibold text-white">
+                      Week {next.week} · <span className="text-sky-300">{next.label}</span>
+                    </p>
+                  </div>
+                  <span className="wp-action-card-arrow" aria-hidden>→</span>
                 </div>
               ) : null;
             })()}
-            <div className="rounded-lg bg-slate-100 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 p-4">
-              <p className="text-slate-700 dark:text-zinc-300 whitespace-pre-wrap">{state.story}</p>
+            <div>
+              <h2 className="wp-section-title">Weekly Snapshot</h2>
+              <p className="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">{state.story}</p>
             </div>
             {!engine.getCanWrestle() && (
               <div className="rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-400 dark:border-amber-500 p-3">
@@ -753,37 +784,43 @@ export function UnifiedGameLayout() {
               </div>
             )}
 
-            <div className="rounded-lg bg-slate-100 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 p-4">
-              <h3 className="text-blue-600 dark:text-blue-400 font-semibold mb-2">Choose action this week</h3>
+            <div className="space-y-1">
+              <h2 className="wp-section-title">
+                {playActionTab === 'training' ? 'Training' : playActionTab === 'school' ? 'School' : 'Relationships'}
+              </h2>
               {hoursLeft <= 0 ? (
-                <p className="text-slate-600 dark:text-zinc-400 text-sm">No hours left this week. Advance to next week to get more time.</p>
+                <p className="text-slate-400 text-sm py-2">No hours left this week. Advance to next week to get more time.</p>
               ) : (
                 <>
-                  <div className="flex gap-1.5 mb-3 flex-wrap">
+                  <div className="flex gap-1.5 mb-1.5 flex-wrap items-center">
                     {(['training', 'school', 'relationship'] as const).map((t) => (
                       <button
                         key={t}
                         type="button"
                         onClick={() => setPlayActionTab(t)}
-                        className={`min-h-[32px] px-2.5 py-1.5 rounded-lg text-xs font-medium touch-manipulation ${playActionTab === t ? 'bg-blue-600 dark:bg-blue-500 text-white' : 'bg-slate-300 dark:bg-zinc-700 text-slate-700 dark:text-zinc-400'}`}
+                        className={`min-h-[32px] px-3 py-1.5 rounded-full text-[11px] font-semibold uppercase tracking-wide touch-manipulation ${
+                          playActionTab === t ? 'bg-sky-500/90 text-white' : 'bg-[#3f424a] text-slate-400 hover:bg-slate-600/80'
+                        }`}
                       >
                         {t === 'training' ? 'Training' : t === 'school' ? 'School' : 'Relationships'}
                       </button>
                     ))}
+                    <span className="self-center text-[10px] text-slate-500 ml-1">Hours left: {hoursLeft}</span>
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     {(() => {
                       const tabKey = playActionTab === 'school' ? 'life' : playActionTab === 'relationship' ? 'relationship' : 'training';
                       const tabChoices = choices.filter((c) => (c as { tab?: string }).tab === tabKey);
                       if (tabChoices.length === 0) {
-                        return <p className="text-slate-500 dark:text-zinc-500 text-sm">No actions in this category right now.</p>;
+                        return <p className="text-slate-500 text-sm py-2">No actions in this category right now.</p>;
                       }
                       return (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                        <div className="flex flex-col gap-2">
                           {tabChoices.map((c) => {
                             const preview = engine.getChoicePreview(c.key);
                             const hours = preview?.hours ?? 0;
                             const money = preview?.money ?? 0;
+                            const energy = preview?.energy;
                             const modD = preview?.modifierDeltas;
                             const modLines: string[] = [];
                             if (modD?.trainingMult) modLines.push(`Training ${modD.trainingMult > 0 ? '+' : ''}${(modD.trainingMult * 100).toFixed(0)}%`);
@@ -794,14 +831,18 @@ export function UnifiedGameLayout() {
                                 key={c.key}
                                 type="button"
                                 onClick={() => applyChoice(c.key)}
-                                className="rounded-lg bg-slate-300 dark:bg-zinc-700 px-3 py-2.5 min-h-[44px] text-sm text-left hover:bg-blue-600 dark:hover:bg-blue-500 active:bg-blue-700 dark:active:bg-blue-600 transition-colors flex flex-col gap-0.5 touch-manipulation"
+                                className="wp-action-card"
                               >
-                                <span>{c.label}</span>
-                                <span className="text-xs text-slate-500 dark:text-zinc-500">
-                                  {hours}h{money > 0 ? ` · $${money}` : ''}
-                                  {preview?.energy !== undefined && preview.energy !== 0 && ` · Energy ${preview.energy > 0 ? '+' : ''}${preview.energy}`}
-                                  {modLines.length > 0 && ` · ${modLines.join(', ')}`}
-                                </span>
+                                <div className="flex min-w-0 flex-1 items-center gap-2">
+                                  <span className="wp-action-card-title truncate">{c.label}</span>
+                                  {energy !== undefined && energy !== 0 && (
+                                    <span className="flex shrink-0 items-center gap-0.5 text-xs text-rose-400">
+                                      <span aria-hidden>⚡</span>
+                                      {energy > 0 ? '+' : ''}{energy}
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="wp-action-card-arrow" aria-hidden>→</span>
                               </button>
                             );
                           })}
@@ -814,14 +855,14 @@ export function UnifiedGameLayout() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm text-slate-600 dark:text-zinc-400">Advance:</span>
+              <span className="text-sm text-slate-400">Advance:</span>
               {([1, 3, 5] as const).map((w) => (
                 <button
                   key={w}
                   type="button"
                   onClick={() => (w === 1 ? advanceWeek() : advanceWeeks(w))}
                   disabled={!getCanAdvanceWeek()}
-                  className="rounded-lg bg-blue-600 dark:bg-blue-500 py-3 px-4 min-h-[44px] font-semibold text-white hover:bg-blue-500 dark:hover:bg-blue-400 active:bg-blue-700 dark:active:bg-blue-600 disabled:opacity-50 disabled:pointer-events-none touch-manipulation"
+                  className="rounded-full bg-[#22c55e] py-3 px-5 min-h-[44px] font-bold text-sm uppercase tracking-wide text-white disabled:opacity-50 disabled:pointer-events-none disabled:bg-slate-700 touch-manipulation"
                 >
                   {w} week{w !== 1 ? 's' : ''} →
                 </button>
@@ -832,9 +873,9 @@ export function UnifiedGameLayout() {
                 type="checkbox"
                 checked={autoTrainOnAdvance}
                 onChange={(e) => setAutoTrainOnAdvance(e.target.checked)}
-                className="rounded border-slate-300 dark:border-zinc-500 text-blue-600 focus:ring-blue-500"
+                className="rounded border-slate-600 text-emerald-400 focus:ring-emerald-500"
               />
-              <span className="text-sm text-slate-700 dark:text-zinc-300">Auto-train when advancing (trains what you need most; single week always trains if you have time & energy)</span>
+              <span className="text-sm text-slate-200">Auto-train when advancing (trains what you need most; single week always trains if you have time &amp; energy)</span>
             </label>
             {!getCanAdvanceWeek() && (
               <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">
@@ -851,44 +892,43 @@ export function UnifiedGameLayout() {
         )}
 
         {view === 'relationships' && (
-          <div className="rounded-lg bg-slate-100 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 p-4">
-            <h3 className="text-blue-600 dark:text-blue-400 font-semibold text-lg mb-4">Relationships</h3>
-            <p className="text-sm text-slate-600 dark:text-zinc-400 mb-4">Spend time or take actions with family, coach, friends, and partner. Each action uses hours this week.</p>
+          <div>
+            <h2 className="wp-section-title">Relationships</h2>
+            <p className="text-sm text-slate-400 mb-4">Hours left: {hoursLeft}. Spend time with family, coach, friends, partner.</p>
             <div className="space-y-4">
               {engine.getRelationships().map((rel) => {
                 const actions = engine.getRelationshipActions(rel.id);
                 const kindLabel = rel.label ?? rel.kind;
                 return (
-                  <div key={rel.id} className="rounded-lg bg-slate-200/80 dark:bg-zinc-900/80 border border-slate-300 dark:border-zinc-600 p-3">
-                    <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
-                      <div>
-                        <span className="font-medium text-slate-900 dark:text-white">{rel.name}</span>
-                        <span className="text-slate-500 dark:text-zinc-500 text-sm ml-2">({kindLabel})</span>
-                      </div>
-                      <div className="text-blue-600 dark:text-blue-400 text-sm">Level {rel.level}</div>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
+                  <div key={rel.id}>
+                    <p className="text-xs font-semibold uppercase tracking-widest text-slate-500 mb-2">
+                      {rel.name} <span className="font-normal normal-case">({kindLabel})</span> · Level {rel.level}
+                    </p>
+                    <div className="flex flex-col gap-2">
                       {actions.map((a) => (
                         <button
                           key={a.key}
                           type="button"
                           onClick={() => applyRelationshipAction(rel.id, a.key)}
-                          className="rounded-lg bg-slate-300 dark:bg-zinc-700 px-3 py-2.5 min-h-[44px] text-sm hover:bg-blue-600 dark:hover:bg-blue-500 active:bg-blue-700 dark:active:bg-blue-600 transition-colors touch-manipulation"
+                          className="wp-action-card"
                         >
-                          {a.label}
-                          {a.hours > 0 && <span className="text-slate-500 dark:text-zinc-500 ml-1">{a.hours}h</span>}
-                          {a.money != null && a.money > 0 && <span className="text-green-600 dark:text-green-400 ml-1">${a.money}</span>}
+                          <div className="flex items-center gap-2">
+                            <span className="wp-action-card-title">{a.label}</span>
+                            {a.hours > 0 && <span className="text-xs text-slate-400">{a.hours}h</span>}
+                            {a.money != null && a.money > 0 && <span className="text-xs text-emerald-400">${a.money}</span>}
+                          </div>
+                          <span className="wp-action-card-arrow" aria-hidden>→</span>
                         </button>
                       ))}
                       {actions.length === 0 && (
-                        <span className="text-slate-500 dark:text-zinc-500 text-sm">No hours left for actions this week.</span>
+                        <p className="text-slate-500 text-sm py-2">No hours left for actions this week.</p>
                       )}
                     </div>
                   </div>
                 );
               })}
               {engine.getRelationships().length === 0 && (
-                <p className="text-slate-500 dark:text-zinc-500">No relationships yet. They may appear as you play.</p>
+                <p className="text-slate-500 text-sm">No relationships yet. They may appear as you play.</p>
               )}
             </div>
           </div>
@@ -1236,11 +1276,14 @@ export function UnifiedGameLayout() {
         )}
 
         {view === 'schedule' && (
-          <div className="rounded-lg bg-slate-100 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 p-4">
-            <h3 className="text-blue-600 dark:text-blue-400 font-semibold text-lg mb-2">Schedule · Year {state.year}</h3>
-            <p className="text-slate-600 dark:text-zinc-400 text-sm mb-2">You are on week <span className="text-blue-600 dark:text-blue-400 font-semibold">{state.week}</span> of 52 · {isInCollege ? 'College season' : engine.getHSPhaseForWeek(state.week ?? 1)}</p>
+          <div>
+            <h2 className="wp-section-title">Season Schedule</h2>
+            <p className="text-slate-400 text-sm mb-3">
+              You are on week <span className="text-white font-bold">{state.week}</span> of 52 ·{' '}
+              {isInCollege ? 'College season' : engine.getHSPhaseForWeek(state.week ?? 1)}
+            </p>
             <div className="overflow-x-auto -mx-1 pb-2 touch-pan-x">
-            <div className="grid grid-cols-7 gap-1.5 max-w-4xl mb-2 min-w-[280px]">
+              <div className="grid grid-cols-7 gap-1.5 max-w-4xl mb-2 min-w-[280px]">
               {Array.from({ length: 52 }, (_, i) => i + 1).map((w) => {
                 const isCurrent = w === (state.week ?? 1);
                 const phase = isInCollege ? (w === 15 ? 'NCAA' : w <= 14 ? 'Season' : '') : engine.getHSPhaseForWeek(w);
@@ -1251,10 +1294,10 @@ export function UnifiedGameLayout() {
                   <div
                     key={w}
                     className={`
-                      min-w-[2.5rem] w-10 sm:min-w-[3.5rem] sm:w-14 rounded flex flex-col items-center justify-center py-1 px-0.5 text-xs font-medium border shrink-0
+                      min-w-[2.5rem] w-10 sm:min-w-[3.5rem] sm:w-14 rounded-xl flex flex-col items-center justify-center py-1 px-0.5 text-xs font-medium border shrink-0
                       ${isCurrent
-                        ? 'bg-blue-600 dark:bg-blue-500 border-blue-500 dark:border-blue-400 text-white ring-2 ring-blue-400 dark:ring-blue-300'
-                        : 'bg-slate-300 dark:bg-zinc-700/80 border-slate-400 dark:border-zinc-600 text-slate-600 dark:text-zinc-400'}
+                        ? 'bg-[#22c55e] border-[#22c55e] text-white ring-2 ring-sky-400/50'
+                        : 'bg-[#3f424a] border-slate-700 text-slate-400'}
                     `}
                     title={title}
                   >
@@ -1263,39 +1306,35 @@ export function UnifiedGameLayout() {
                   </div>
                 );
               })}
+              </div>
             </div>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-zinc-500">
+            <p className="text-xs text-slate-500 mt-1">
               {isInCollege ? 'Weeks 1–14: early season (opens + duals), midseason (duals + invites), conference stretch, Conf Champs (12), recovery; Week 15 NCAA. Travel duals = 2 matches; opens may rest starters.' : 'Duals and tournaments show opponent or event name. Weeks 9–20 Offseason, 21–30 Summer (Fargo 27–28), 31–38 Preseason, 39–49 Regular, 50 Districts, 51 State, 52 Wrap.'}
             </p>
           </div>
         )}
 
         {view === 'lifestyle' && (
-          <div className="rounded-lg bg-slate-100 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 p-4 max-w-lg">
-            <h3 className="text-blue-600 dark:text-blue-400 font-semibold text-lg mb-1">Lifestyle</h3>
-            <p className="text-sm text-slate-600 dark:text-zinc-400 mb-4">Spend money on housing, a car, meal plans, and recovery gear. Better lifestyle costs more each week but improves performance, recovery, and stress.</p>
-            <div className="flex flex-wrap gap-4 mb-4 p-3 rounded-lg bg-slate-200/80 dark:bg-zinc-700/80">
-              <span className="font-medium text-slate-800 dark:text-zinc-200">Cash: <span className="text-green-600 dark:text-green-400">${state.money}</span></span>
-              <span className="text-slate-600 dark:text-zinc-400">Weekly lifestyle cost: <span className="font-medium">${engine.getLifestyleWeeklyCost()}</span></span>
-            </div>
+          <div className="max-w-lg">
+            <h2 className="wp-section-title">Lifestyle</h2>
+            <p className="text-sm text-slate-400 mb-4">Spend money on housing, car, meal plans, recovery gear. Cash: <span className="font-semibold text-white">${state.money}</span> · Weekly cost: ${engine.getLifestyleWeeklyCost()}</p>
             <div className="space-y-4">
               {engine.getLifestyleOptions().map((opt) => {
                 const catLabel = opt.category === 'housing' ? 'Housing' : opt.category === 'car' ? 'Car' : opt.category === 'mealPlan' ? 'Meal plan' : 'Recovery equipment';
                 return (
-                  <div key={opt.category} className="rounded-lg border border-slate-200 dark:border-zinc-600 p-3 bg-white dark:bg-zinc-800/50">
+                  <div key={opt.category} className="rounded-2xl border border-slate-800 p-3 bg-slate-900/70">
                     <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                      <h4 className="text-sm font-medium text-slate-700 dark:text-zinc-300">{catLabel}</h4>
-                      <span className="text-sm text-slate-600 dark:text-zinc-400">Current: <strong>{opt.current}</strong>{opt.currentWeekly != null && opt.currentWeekly > 0 ? ` · $${opt.currentWeekly}/wk` : ''}</span>
+                      <h4 className="text-sm font-medium text-slate-100">{catLabel}</h4>
+                      <span className="text-sm text-slate-300">Current: <strong>{opt.current}</strong>{opt.currentWeekly != null && opt.currentWeekly > 0 ? ` · $${opt.currentWeekly}/wk` : ''}</span>
                     </div>
                     {opt.nextUpgrade ? (
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm text-slate-600 dark:text-zinc-400">Upgrade to <strong>{opt.nextUpgrade.label}</strong></span>
+                        <span className="text-sm text-slate-300">Upgrade to <strong>{opt.nextUpgrade.label}</strong></span>
                         {opt.nextUpgrade.oneTimeCost != null && opt.nextUpgrade.oneTimeCost > 0 && (
-                          <span className="text-xs text-amber-600 dark:text-amber-400">${opt.nextUpgrade.oneTimeCost} one-time</span>
+                          <span className="text-xs text-amber-300">${opt.nextUpgrade.oneTimeCost} one-time</span>
                         )}
                         {opt.nextUpgrade.weeklyCost != null && opt.nextUpgrade.weeklyCost > 0 && (
-                          <span className="text-xs text-slate-500 dark:text-zinc-500">${opt.nextUpgrade.weeklyCost}/wk</span>
+                          <span className="text-xs text-slate-400">${opt.nextUpgrade.weeklyCost}/wk</span>
                         )}
                         <button
                           type="button"
@@ -1309,14 +1348,14 @@ export function UnifiedGameLayout() {
                               if (!r.success) alert(r.message);
                             }
                           }}
-                          className="rounded-lg bg-blue-600 dark:bg-blue-500 text-white px-3 py-1.5 text-sm font-medium min-h-[44px] touch-manipulation disabled:opacity-50"
+                          className="rounded-full bg-[#22c55e] text-white px-4 py-2 text-sm font-bold uppercase tracking-wide min-h-[44px] touch-manipulation disabled:opacity-50 disabled:bg-slate-700"
                           disabled={(opt.nextUpgrade.oneTimeCost != null && (state.money ?? 0) < opt.nextUpgrade.oneTimeCost) || (opt.nextUpgrade.weeklyCost != null && (state.money ?? 0) < (opt.nextUpgrade.weeklyCost ?? 0))}
                         >
                           {opt.category === 'car' || opt.category === 'recoveryEquipment' ? 'Buy' : 'Upgrade'}
                         </button>
                       </div>
                     ) : (
-                      <p className="text-xs text-slate-500 dark:text-zinc-500">Max tier.</p>
+                      <p className="text-xs text-slate-500">Max tier.</p>
                     )}
                   </div>
                 );
@@ -1324,27 +1363,27 @@ export function UnifiedGameLayout() {
             </div>
             <p className="text-xs text-slate-500 dark:text-zinc-500 mt-4">Housing and meal plan charge weekly. Car and recovery equipment are one-time purchases. Last week&apos;s expenses (including lifestyle) appear in the week summary after you advance.</p>
 
-            <h4 className="text-sm font-semibold text-slate-700 dark:text-zinc-300 mt-6 mb-2">Custom purchases</h4>
-            <p className="text-xs text-slate-500 dark:text-zinc-500 mb-3">One-time buys: gear, recovery, and luxuries. Some are expensive.</p>
+            <h2 className="wp-section-title mt-8">Custom purchases</h2>
+            <p className="text-xs text-slate-400 mb-3">One-time buys: gear, recovery, and luxuries. Some are expensive.</p>
             <div className="space-y-2 max-h-[50vh] overflow-y-auto">
               {engine.getCustomLifestyleCatalog().map((item) => (
-                <div key={item.id} className={`rounded-lg border p-3 ${item.owned ? 'border-green-400 dark:border-green-600 bg-green-50/50 dark:bg-green-950/20' : 'border-slate-200 dark:border-zinc-600 bg-white dark:bg-zinc-800/50'}`}>
+                <div key={item.id} className={`rounded-2xl border p-3 ${item.owned ? 'border-emerald-400 bg-emerald-900/20' : 'border-slate-800 bg-slate-900/70'}`}>
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
-                      <div className="font-medium text-slate-800 dark:text-zinc-200">{item.name}</div>
-                      <div className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">{item.description}</div>
-                      {!item.owned && <div className="text-xs text-slate-600 dark:text-zinc-300 mt-1">{item.effectSummary}</div>}
+                      <div className="font-medium text-slate-100">{item.name}</div>
+                      <div className="text-xs text-slate-400 mt-0.5">{item.description}</div>
+                      {!item.owned && <div className="text-xs text-slate-300 mt-1">{item.effectSummary}</div>}
                     </div>
                     {item.owned ? (
-                      <span className="text-xs font-medium text-green-600 dark:text-green-400">Owned</span>
+                        <span className="text-xs font-medium text-emerald-300">Owned</span>
                     ) : (
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className={`text-sm font-semibold ${item.cost >= 2000 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-700 dark:text-zinc-300'}`}>${item.cost}</span>
-                        {item.weeklyCost != null && item.weeklyCost > 0 && <span className="text-xs text-slate-500">+${item.weeklyCost}/wk</span>}
+                        <span className={`text-sm font-semibold ${item.cost >= 2000 ? 'text-amber-300' : 'text-slate-100'}`}>${item.cost}</span>
+                        {item.weeklyCost != null && item.weeklyCost > 0 && <span className="text-xs text-slate-400">+${item.weeklyCost}/wk</span>}
                         <button
                           type="button"
                           onClick={() => { const r = purchaseCustomItem(item.id); if (!r.success) alert(r.message); }}
-                          className="rounded-lg bg-blue-600 dark:bg-blue-500 text-white px-3 py-1.5 text-sm font-medium min-h-[36px] touch-manipulation disabled:opacity-50"
+                          className="rounded-full bg-[#22c55e] text-white px-4 py-2 text-sm font-bold uppercase tracking-wide min-h-[40px] touch-manipulation disabled:opacity-50 disabled:bg-slate-700"
                           disabled={!item.canAfford}
                         >
                           Buy
@@ -1359,15 +1398,15 @@ export function UnifiedGameLayout() {
         )}
 
         {view === 'life' && (
-          <div className="rounded-lg bg-slate-100 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 p-4 max-w-lg">
-            <h3 className="text-blue-600 dark:text-blue-400 font-semibold text-lg mb-1">Life log</h3>
-            <p className="text-sm text-slate-600 dark:text-zinc-400 mb-4">Popup events and the choices you made. New events appear each week when you advance.</p>
+          <div className="max-w-lg">
+            <h2 className="wp-section-title">Life Log</h2>
+            <p className="text-sm text-slate-300 mb-4">Popup events and the choices you made. New events appear each week when you advance.</p>
             {lifeLog.length === 0 ? (
-              <p className="text-slate-500 dark:text-zinc-500 text-sm">No life events logged yet. Advance a week to see popups and your choices here.</p>
+              <p className="text-slate-500 text-sm">No life events logged yet. Advance a week to see popups and your choices here.</p>
             ) : (
               <ul className="space-y-2 max-h-[60vh] overflow-y-auto">
                 {lifeLog.map((entry, i) => (
-                  <li key={i} className="text-sm text-slate-700 dark:text-zinc-300 border-l-2 border-slate-300 dark:border-zinc-600 pl-3 py-1">
+                  <li key={i} className="text-sm text-slate-200 border-l-2 border-slate-700 pl-3 py-1">
                     {entry.text}
                   </li>
                 ))}
@@ -1377,23 +1416,26 @@ export function UnifiedGameLayout() {
         )}
 
         {view === 'team' && isInCollege && (
-          <div className="rounded-lg bg-slate-100 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 p-4">
-            <h3 className="text-blue-600 dark:text-blue-400 font-semibold text-lg mb-2">{state.collegeName ?? 'Team'} · Lineup</h3>
+          <div className="wp-card">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-slate-100 tracking-[0.16em] uppercase">{state.collegeName ?? 'Team'} · Lineup</h3>
+              <span className="wp-pill-blue">Roster</span>
+            </div>
             {!(state.collegeRoster ?? []).length ? (
-              <p className="text-slate-600 dark:text-zinc-400 text-sm">Roster will appear after you advance a week.</p>
+              <p className="text-slate-300 text-sm">Roster will appear after you advance a week.</p>
             ) : (
               <>
-                <p className="text-slate-600 dark:text-zinc-400 text-sm mb-4">Your weight: {state.weightClass} lbs. {engine.isCollegeStarter() ? 'You are the starter at your weight for duals.' : "You're the backup — you don't start in duals until you're the best at your weight."}</p>
+                <p className="text-slate-300 text-sm mb-4">Your weight: {state.weightClass} lbs. {engine.isCollegeStarter() ? 'You are the starter at your weight for duals.' : "You're the backup — you don't start in duals until you're the best at your weight."}</p>
                 <div className="space-y-4">
                   {Array.from(new Set((state.collegeRoster ?? []).map((r) => r.weightClass))).sort((a, b) => a - b).map((wc) => {
                 const atWeight = (state.collegeRoster ?? []).filter((r) => r.weightClass === wc).sort((a, b) => b.overallRating - a.overallRating);
                 const isMyWeight = wc === state.weightClass;
                 return (
-                  <div key={wc} className={`rounded-lg border p-3 ${isMyWeight ? 'border-blue-500 dark:border-blue-400 bg-blue-50/50 dark:bg-blue-950/30' : 'border-slate-200 dark:border-zinc-600'}`}>
-                    <h4 className="text-sm font-medium text-slate-700 dark:text-zinc-300 mb-2">{wc} lbs</h4>
+                  <div key={wc} className={`rounded-2xl border p-3 ${isMyWeight ? 'border-emerald-400 bg-emerald-900/10' : 'border-slate-800'}`}>
+                    <h4 className="text-sm font-medium text-slate-100 mb-2">{wc} lbs</h4>
                     <ul className="space-y-1">
                       {atWeight.map((r, i) => (
-                        <li key={r.id} className={`flex justify-between text-sm ${r.isPlayer ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-slate-600 dark:text-zinc-400'}`}>
+                        <li key={r.id} className={`flex justify-between text-sm ${r.isPlayer ? 'text-emerald-300 font-medium' : 'text-slate-300'}`}>
                           <span>{r.name}{r.isPlayer ? ' (you)' : ''}</span>
                           <span>{r.overallRating} {i === 0 ? '· Starter' : '· Backup'}</span>
                         </li>
@@ -1409,16 +1451,16 @@ export function UnifiedGameLayout() {
         )}
 
         {view === 'settings' && (
-          <div className="rounded-lg bg-slate-100 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 p-4 max-w-md space-y-6">
-            <h3 className="text-blue-600 dark:text-blue-400 font-semibold text-lg">Settings</h3>
+          <div className="max-w-md space-y-6">
+            <h2 className="wp-section-title">Settings</h2>
 
             <section>
-              <h4 className="text-sm font-medium text-slate-600 dark:text-zinc-300 mb-2">Weight class</h4>
-              <p className="text-xs text-slate-500 dark:text-zinc-500 mb-2">Switch to a different weight for your current level (HS or college).</p>
+              <h4 className="text-sm font-medium text-slate-100 mb-2">Weight class</h4>
+              <p className="text-xs text-slate-400 mb-2">Switch to a different weight for your current level (HS or college).</p>
               <select
                 value={state.weightClass ?? 145}
                 onChange={(e) => setWeightClass(Number(e.target.value))}
-                className="rounded-lg border border-slate-300 dark:border-zinc-500 bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-200 px-3 py-2 text-sm min-h-[44px] touch-manipulation"
+                className="rounded-2xl border border-slate-700 bg-slate-900 text-slate-100 px-3 py-2 text-sm min-h-[44px] touch-manipulation"
               >
                 {UnifiedEngine.getWeightClasses(state.league).map((wc) => (
                   <option key={wc} value={wc}>{wc} lbs</option>
@@ -1427,10 +1469,10 @@ export function UnifiedGameLayout() {
             </section>
 
             <section>
-              <h4 className="text-sm font-medium text-slate-600 dark:text-zinc-300 mb-2">Game</h4>
-              <div className="space-y-2 text-sm text-slate-600 dark:text-zinc-400">
+              <h4 className="text-sm font-medium text-slate-100 mb-2">Game</h4>
+              <div className="space-y-2 text-sm text-slate-300">
                 <p>Save data is stored in this browser. Start a new game to reset your career.</p>
-                <button type="button" onClick={goToCreate} className="rounded-lg bg-slate-300 dark:bg-zinc-700 px-4 py-2.5 text-sm font-medium text-slate-700 dark:text-zinc-300 active:bg-slate-400 dark:active:bg-zinc-600 touch-manipulation mt-2">
+                <button type="button" onClick={goToCreate} className="rounded-full bg-slate-800 px-4 py-2.5 text-sm font-medium text-slate-100 active:bg-slate-700 touch-manipulation mt-2 border border-slate-700">
                   New game
                 </button>
               </div>
@@ -1438,24 +1480,24 @@ export function UnifiedGameLayout() {
 
             <section>
               <button type="button" onClick={() => setTipsOpen(!tipsOpen)} className="flex items-center justify-between w-full text-left">
-                <h4 className="text-sm font-medium text-slate-600 dark:text-zinc-300">How to play / Tips &amp; tricks</h4>
-                <span className="text-slate-500 dark:text-zinc-400">{tipsOpen ? '▼' : '▶'}</span>
+                <h4 className="text-sm font-medium text-slate-100">How to play / Tips &amp; tricks</h4>
+                <span className="text-slate-500">{tipsOpen ? '▼' : '▶'}</span>
               </button>
               {tipsOpen && (
-                <div className="mt-3 space-y-2 text-sm text-slate-600 dark:text-zinc-400">
-                  <p className="font-medium text-slate-700 dark:text-zinc-300">Basics</p>
+                <div className="mt-3 space-y-2 text-sm text-slate-300">
+                  <p className="font-medium text-slate-100">Basics</p>
                   <ul className="list-disc list-inside space-y-1 pl-1">
                     <li>Spend <strong>hours</strong> each week on Train, Study, Rest, or Relationships. Hours reset every week.</li>
                     <li>Keep <strong>grades</strong> up for college options; <strong>conditioning</strong> affects match performance and decays if you don&apos;t train.</li>
                     <li>Rest and Rehab don&apos;t reduce conditioning; only skipping training does.</li>
                   </ul>
-                  <p className="font-medium text-slate-700 dark:text-zinc-300 mt-3">High school</p>
+                  <p className="font-medium text-slate-100 mt-3">High school</p>
                   <ul className="list-disc list-inside space-y-1 pl-1">
                     <li>Win matches and place at state to boost your <strong>recruiting score</strong>. Better score = better college offers at graduation.</li>
                     <li>Fargo, Super 32, and Who&apos;s Number One are offseason events — do them to improve recruiting.</li>
                     <li>At age 18 you graduate and get college offers. You must pick a school to advance; negotiate for more scholarship or NIL first if you want.</li>
                   </ul>
-                  <p className="font-medium text-slate-700 dark:text-zinc-300 mt-3">College</p>
+                  <p className="font-medium text-slate-100 mt-3">College</p>
                   <ul className="list-disc list-inside space-y-1 pl-1">
                     <li>College uses <strong>NCAA weight classes</strong> (125–285). Your weight and rankings switch to college weights when you commit.</li>
                     <li><strong>US Open</strong> (week 18) is the college offseason event; place 1st or 2nd to qualify for <strong>World Championship</strong> (week 22).</li>
@@ -1467,8 +1509,8 @@ export function UnifiedGameLayout() {
             </section>
 
             <section>
-              <h4 className="text-sm font-medium text-slate-600 dark:text-zinc-300 mb-2">About</h4>
-              <p className="text-sm text-slate-600 dark:text-zinc-400">
+              <h4 className="text-sm font-medium text-slate-100 mb-2">About</h4>
+              <p className="text-sm text-slate-300">
                 Wrestling Career Sim — week-by-week choices, high school to college, state and NCAA, Fargo, rankings, recruiting.
               </p>
             </section>
@@ -1476,18 +1518,57 @@ export function UnifiedGameLayout() {
         )}
       </main>
 
-      {/* Desktop top-right bar (Hours, Energy, $ — New game is in Settings) */}
-      <div className="hidden md:flex absolute top-4 right-4 items-center gap-3">
-        <span className="text-xs text-zinc-400">
-          <span className="text-blue-600 dark:text-blue-400 font-medium">Hours:</span> {state.hoursLeftThisWeek ?? 40}
-        </span>
-        <span className="text-xs text-slate-600 dark:text-zinc-400">
-          <span className="text-blue-600 dark:text-blue-400 font-medium">Energy:</span> {state.energy}
-        </span>
-        <span className="text-xs text-slate-600 dark:text-zinc-400">
-          <span className="text-blue-600 dark:text-blue-400 font-medium">$</span>{state.money}
-        </span>
+      {/* Desktop top status bar — inspo: $ + energy left, END WEEK + week right */}
+      <div className="hidden md:flex absolute top-0 inset-x-0 z-20 px-6 pt-4 pb-3 bg-[#1e2128] border-b border-slate-800">
+        <div className="flex w-full items-center justify-between">
+          <div className="flex items-center gap-6">
+            <div>
+              <div className="text-xl font-bold text-white">${state.money}</div>
+              <div className="flex items-center gap-1 text-sm text-rose-400">
+                <span aria-hidden>⚡</span>
+                <span className="text-white">{state.energy}</span>
+                <span className="text-slate-500">|</span>
+                <span className="text-slate-400">100</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-right text-xs text-slate-400">
+              Week {state.week ?? 1}, {state.year}
+            </div>
+            <button
+              type="button"
+              onClick={() => advanceWeek()}
+              disabled={!getCanAdvanceWeek()}
+              className="rounded-full bg-[#22c55e] px-5 py-2.5 text-sm font-bold uppercase tracking-wide text-white disabled:opacity-50 disabled:bg-slate-700"
+            >
+              End Week
+            </button>
+          </div>
+        </div>
       </div>
+
+      {/* Bottom navigation – mobile only */}
+      <nav className="wp-bottom-nav">
+        <div className="wp-bottom-nav-inner">
+          {bottomNavItems.map((item) => {
+            const isHiddenCollege = item.id === 'team' && !isInCollege;
+            if (isHiddenCollege) return null;
+            const isActive = view === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setView(item.id)}
+                className={`wp-bottom-nav-item ${isActive ? 'wp-bottom-nav-item-active' : ''}`}
+              >
+                <span className="text-xs">{item.label}</span>
+                {isActive && <span className="wp-bottom-nav-dot" />}
+              </button>
+            );
+          })}
+        </div>
+      </nav>
     </div>
   );
 }

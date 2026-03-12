@@ -1,11 +1,11 @@
 @import "tailwindcss";
 
-/* NCAA-style: white + blue (light), black + blue (dark) */
+/* Global game theme – muted dark sim/tycoon look */
 :root {
-  --background: #ffffff;
-  --foreground: #0f172a;
-  --accent: #1e40af;
-  --accent-hover: #2563eb;
+  --background: #020617; /* slate-950 */
+  --foreground: #f9fafb;
+  --accent: #22c55e; /* primary action (End Week) */
+  --accent-hover: #16a34a;
 }
 
 @theme inline {
@@ -17,10 +17,10 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #09090b;
-    --foreground: #fafafa;
-    --accent: #3b82f6;
-    --accent-hover: #60a5fa;
+    --background: #020617;
+    --foreground: #f9fafb;
+    --accent: #22c55e;
+    --accent-hover: #16a34a;
   }
 }
 
@@ -29,10 +29,107 @@ html {
 }
 
 body {
-  background: var(--background);
+  background: radial-gradient(circle at top, #020617 0, #020617 40%, #020617 70%, #020617 100%);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
   /* Safe area for notched devices (used with viewport-fit=cover) */
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
+}
+
+/* Reusable game UI helpers (kept purely visual – no logic attached) */
+.wp-shell {
+  @apply w-full max-w-md md:max-w-6xl md:mx-auto rounded-none md:rounded-xl md:my-2 border-0 md:border border-slate-800 bg-[#252830] text-slate-50 shadow-none md:shadow-xl overflow-hidden flex flex-col min-h-0;
+}
+
+.wp-screen {
+  @apply flex flex-1 min-h-0 flex-col bg-[#1e2128] overflow-y-auto;
+}
+
+.wp-card {
+  @apply rounded-2xl bg-slate-900/80 border border-slate-800 px-4 py-3;
+}
+
+/* Inspo: section headers — compact */
+.wp-section-title {
+  @apply text-xs md:text-sm font-bold tracking-[0.15em] uppercase text-slate-400 mb-2 mt-4 first:mt-0;
+}
+
+/* Inspo: dark rounded list card — compact, title left, arrow right */
+.wp-action-card {
+  @apply flex items-center justify-between gap-2 rounded-lg bg-[#3f424a] min-h-[44px] px-3 py-2 text-left transition-colors hover:bg-slate-600/80 active:bg-slate-600;
+}
+.wp-action-card-title {
+  @apply font-semibold text-white uppercase tracking-wide text-xs;
+}
+.wp-action-card-arrow {
+  @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-700/80 text-white text-sm;
+}
+
+/* Dark scrollbars — blend with background */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #475569 #1e2128;
+}
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: #1e2128;
+}
+*::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 3px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+.wp-pill {
+  @apply inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold tracking-wide uppercase;
+}
+
+.wp-pill-gold {
+  @apply inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold tracking-wide uppercase bg-amber-500/15 text-amber-300 border border-amber-400/60;
+}
+
+.wp-pill-blue {
+  @apply inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold tracking-wide uppercase bg-sky-500/15 text-sky-300 border border-sky-400/60;
+}
+
+.wp-pill-purple {
+  @apply inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold tracking-wide uppercase bg-violet-500/15 text-violet-300 border border-violet-400/60;
+}
+
+.wp-pill-orange {
+  @apply inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold tracking-wide uppercase bg-orange-500/15 text-orange-300 border border-orange-400/60;
+}
+
+.wp-pill-red {
+  @apply inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold tracking-wide uppercase bg-rose-500/15 text-rose-300 border border-rose-400/60;
+}
+
+.wp-pill-green {
+  @apply inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold tracking-wide uppercase bg-emerald-500/15 text-emerald-300 border border-emerald-400/60;
+}
+
+.wp-bottom-nav {
+  @apply md:hidden fixed inset-x-0 bottom-0 z-30 bg-[#1e2128] border-t border-slate-800;
+}
+
+.wp-bottom-nav-inner {
+  @apply max-w-md mx-auto flex items-center justify-between gap-2 px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom)+0.25rem)];
+}
+
+.wp-bottom-nav-item {
+  @apply flex-1 flex flex-col items-center justify-center gap-0.5 text-[11px] font-medium text-slate-500;
+}
+
+.wp-bottom-nav-item-active {
+  @apply text-sky-300;
+}
+
+.wp-bottom-nav-dot {
+  @apply h-1.5 w-1.5 rounded-full bg-sky-400;
 }

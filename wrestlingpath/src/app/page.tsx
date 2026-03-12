@@ -7,9 +7,11 @@ import { UnifiedGameLayout } from '@/ui/components/UnifiedGameLayout';
 function GameRoot() {
   const { screen } = useGame();
   return (
-    <div className="min-h-[100dvh] min-h-screen bg-slate-50 dark:bg-zinc-950 flex items-center justify-center p-4 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] overflow-auto">
-      {screen === 'create' && <CreateScreen />}
-      {screen === 'game' && <UnifiedGameLayout />}
+    <div className="h-dvh min-h-screen flex flex-col bg-[#1e2128] overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+      <div className="wp-shell flex-1 min-h-0 flex flex-col">
+        {screen === 'create' && <CreateScreen />}
+        {screen === 'game' && <UnifiedGameLayout />}
+      </div>
     </div>
   );
 }
