@@ -298,7 +298,7 @@ export function UnifiedGameLayout() {
         </>
       )}
 
-      {/* Mobile top bar — inspo: $ + energy left, END WEEK + week right */}
+      {/* Mobile top bar — $ + time (hours) left, END WEEK + week right */}
       <header className="md:hidden shrink-0 border-b border-slate-800 bg-[#1e2128] px-4 py-3">
         <div className="flex items-start justify-between gap-4">
           <div className="flex min-w-0 flex-1 items-start gap-2">
@@ -307,11 +307,11 @@ export function UnifiedGameLayout() {
             </button>
             <div>
               <div className="text-xl font-bold text-white">${state.money}</div>
-              <div className="flex items-center gap-1 text-sm text-rose-400">
-                <span aria-hidden>⚡</span>
-                <span className="text-white">{state.energy}</span>
+              <div className="flex items-center gap-1 text-sm text-slate-300" title="Hours left this week (you can't get time back)">
+                <span aria-hidden>⏱</span>
+                <span className="text-white">{hoursLeft}</span>
                 <span className="text-slate-500">|</span>
-                <span className="text-slate-400">100</span>
+                <span className="text-slate-400">40</span>
               </div>
             </div>
           </div>
@@ -1518,17 +1518,17 @@ export function UnifiedGameLayout() {
         )}
       </main>
 
-      {/* Desktop top status bar — inspo: $ + energy left, END WEEK + week right */}
+      {/* Desktop top status bar — $ + time (hours) left, END WEEK + week right */}
       <div className="hidden md:flex absolute top-0 inset-x-0 z-20 px-6 pt-4 pb-3 bg-[#1e2128] border-b border-slate-800">
         <div className="flex w-full items-center justify-between">
           <div className="flex items-center gap-6">
             <div>
               <div className="text-xl font-bold text-white">${state.money}</div>
-              <div className="flex items-center gap-1 text-sm text-rose-400">
-                <span aria-hidden>⚡</span>
-                <span className="text-white">{state.energy}</span>
+              <div className="flex items-center gap-1 text-sm text-slate-300" title="Hours left this week (you can't get time back)">
+                <span aria-hidden>⏱</span>
+                <span className="text-white">{hoursLeft}</span>
                 <span className="text-slate-500">|</span>
-                <span className="text-slate-400">100</span>
+                <span className="text-slate-400">40</span>
               </div>
             </div>
           </div>
